@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 300">
+  <!-- Shield background -->
+  <path d="M150 20 L270 70 L270 150 C270, 230 220, 280 150, 280 C80, 280 30, 230 30, 150 L30 70 Z" fill="#2A3D66"/>
+  
+  <!-- Inner shield -->
+  <path d="M150 40 L250 80 L250 150 C250, 210 210, 260 150, 260 C90, 260 50, 210 50, 150 L50 80 Z" fill="#3A4D76"/>
+  
+  <!-- Shield highlight -->
+  <path d="M150 60 L230 90 L230 150 C230, 200 195, 240 150, 240 C105, 240 70, 200 70, 150 L70 90 Z" fill="#4A5D86"/>
+  
+  <!-- Shield core -->
+  <path d="M150 80 L210 105 L210 150 C210, 190 180, 220 150, 220 C120, 220 90, 190 90, 150 L90 105 Z" fill="#5A6D96"/>
+  
+  <!-- Bot icon (crossed out) -->
+  <circle cx="150" cy="140" r="40" fill="#fff" opacity="0.9"/>
+  <rect x="130" y="110" width="40" height="60" rx="10" fill="#2A3D66"/>
+  <rect x="140" y="100" width="20" height="10" rx="3" fill="#2A3D66"/>
+  <circle cx="140" cy="130" r="5" fill="#fff"/>
+  <circle cx="160" cy="130" r="5" fill="#fff"/>
+  
+  <!-- Red prohibition symbol -->
+  <circle cx="150" cy="140" r="50" stroke="#FF3A36" stroke-width="8" fill="none"/>
+  <line x1="110" y1="100" x2="190" y2="180" stroke="#FF3A36" stroke-width="8"/>
+</svg>
