@@ -43,8 +43,8 @@ class CircuitBreaker {
      * @param int $recoveryTime Time to wait before attempting recovery
      */
     public function __construct($failureThreshold = 5, $recoveryTime = 60) {
-        $this->failureThreshold = $failureThreshold;
-        $this->recoveryTime = $recoveryTime;
+        $this->failureThreshold = max(1, (int)$failureThreshold);
+        $this->recoveryTime = max(1, (int)$recoveryTime);
     }
 
     /**
@@ -114,10 +114,10 @@ class OrderQueue {
      * Constructor
      * 
      * @param int $maxQueueSize Maximum number of orders in queue
-     * @param string $storagePath Path to store persistent queue
+     * @param string|null $storagePath Path to store persistent queue
      */
     public function __construct($maxQueueSize = 100, $storagePath = null) {
-        $this->maxQueueSize = $maxQueueSize;
+        $this->maxQueueSize = max(1, (int)$maxQueueSize);
         $this->storagePath = $storagePath ?? sys_get_temp_dir() . '/blackwall_order_queue.json';
         
         // Load existing queue
@@ -129,16 +129,28 @@ class OrderQueue {
      */
     private function loadQueue() {
         if (file_exists($this->storagePath)) {
-            $queueData = file_get_contents($this->storagePath);
-            $this->queue = json_decode($queueData, true) ?? [];
+            try {
+                $queueData = file_get_contents($this->storagePath);
+                $decodedData = json_decode($queueData, true);
+                $this->queue = is_array($decodedData) ? $decodedData : [];
+            } catch (Exception $e) {
+                // If file is corrupted, start with empty queue
+                $this->queue = [];
+            }
         }
     }
 
     /**
      * Save queue to persistent storage
+     * 
+     * @return bool Success status
      */
     private function saveQueue() {
-        file_put_contents($this->storagePath, json_encode($this->queue));
+        try {
+            return (bool)file_put_contents($this->storagePath, json_encode($this->queue), LOCK_EX);
+        } catch (Exception $e) {
+            return false;
+        }
     }
 
     /**
@@ -158,7 +170,7 @@ class OrderQueue {
             'timestamp' => time(),
             'status' => 'pending',
             'attempts' => 0,
-            'unique_id' => uniqid('order_')
+            'unique_id' => uniqid('order_', true)
         ];
 
         $this->queue[] = $queuedOrder;
@@ -190,13 +202,18 @@ class OrderQueue {
      * Clear expired orders from queue
      * 
      * @param int $expirationTime Maximum time an order can stay in queue (seconds)
+     * @return int Number of cleared orders
      */
     public function clearExpiredOrders($expirationTime = 3600) {
+        $initialCount = count($this->queue);
         $currentTime = time();
+        
         $this->queue = array_filter($this->queue, function($order) use ($currentTime, $expirationTime) {
             return ($currentTime - $order['timestamp']) <= $expirationTime;
         });
+        
         $this->saveQueue();
+        return $initialCount - count($this->queue);
     }
 
     /**
@@ -209,8 +226,7 @@ class OrderQueue {
         foreach ($this->queue as &$order) {
             if ($order['unique_id'] === $uniqueId) {
                 $order['status'] = 'processed';
-                $this->saveQueue();
-                return true;
+                return $this->saveQueue();
             }
         }
         return false;
@@ -239,7 +255,7 @@ class BlackwallOrderManager {
      * 
      * @param LogHelper $logger Logging utility
      * @param ApiHelper $apiClient API communication client
-     * @param CircuitBreaker $circuitBreaker Circuit breaker instance
+     * @param CircuitBreaker|null $circuitBreaker Circuit breaker instance
      */
     public function __construct(LogHelper $logger, ApiHelper $apiClient, CircuitBreaker $circuitBreaker = null) {
         $this->logger = $logger;
@@ -251,11 +267,12 @@ class BlackwallOrderManager {
      * Advanced Order Creation Method
      * 
      * @param array $orderData Order details
-     * @return array|false Order creation result
+     * @return array Order creation result
+     * @throws OrderCreationException If order creation fails
      */
     public function createOrder($orderData) {
         // Unique identifier for this order creation attempt
-        $orderCreationId = uniqid('blackwall_order_');
+        $orderCreationId = uniqid('blackwall_order_', true);
         $startTime = microtime(true);
 
         try {
@@ -291,15 +308,21 @@ class BlackwallOrderManager {
             // Record circuit breaker failure
             $this->circuitBreaker->recordFailure();
             
-            return false;
+            // Re-throw the exception
+            throw $e;
         } catch (Exception $e) {
             // Handle unexpected exceptions
             $this->handleUnexpectedException($e, $orderCreationId, $orderData);
             
-            // Force circuit breaker open
+            // Force circuit breaker open for unexpected errors
             $this->circuitBreaker->forceOpen();
             
-            return false;
+            // Convert to OrderCreationException
+            throw new OrderCreationException(
+                "Unexpected error: " . $e->getMessage(),
+                OrderCreationException::RETRY_LIMIT_EXCEEDED,
+                $e
+            );
         }
     }
 
@@ -337,8 +360,8 @@ class BlackwallOrderManager {
      * @return bool Validation result
      */
     private function isValidDomain($domain) {
-        // Simple domain validation
-        return (bool) preg_match('/^[a-zA-Z0-9][a-zA-Z0-9-]{1,61}[a-zA-Z0-9]\.[a-zA-Z]{2,}$/', $domain);
+        // More comprehensive domain validation
+        return (bool) preg_match('/^(?:[-A-Za-z0-9]+\.)+[A-Za-z]{2,}$/', $domain);
     }
 
     /**
@@ -350,6 +373,12 @@ class BlackwallOrderManager {
      * @throws OrderCreationException If creation fails
      */
     private function performOrderCreation($orderData, $orderCreationId) {
+        // Log start of creation process
+        $this->logger->info('Starting order creation process', [
+            'order_id' => $orderCreationId,
+            'domain' => $orderData['domain']
+        ]);
+
         // Attempt to create Botguard user
         $user = $this->createBotguardUser($orderData);
 
@@ -380,15 +409,33 @@ class BlackwallOrderManager {
      */
     private function createBotguardUser($orderData) {
         try {
-            return $this->apiClient->createUser(
+            // Log attempt
+            $this->logger->info('Creating Botguard user', [
+                'email' => $orderData['email']
+            ]);
+            
+            $result = $this->apiClient->createUser(
                 $orderData['email'], 
                 $orderData['first_name'], 
                 $orderData['last_name']
             );
+            
+            // Log success
+            $this->logger->info('Botguard user created', [
+                'user_id' => $result['id'] ?? 'unknown'
+            ]);
+            
+            return $result;
         } catch (Exception $e) {
+            $this->logger->error('Botguard user creation failed', [
+                'email' => $orderData['email'],
+                'error' => $e->getMessage()
+            ]);
+            
             throw new OrderCreationException(
                 "Botguard user creation failed: " . $e->getMessage(), 
-                OrderCreationException::USER_CREATION_FAILED
+                OrderCreationException::USER_CREATION_FAILED,
+                $e
             );
         }
     }
@@ -403,14 +450,35 @@ class BlackwallOrderManager {
      */
     private function createBotguardWebsite($user, $orderData) {
         try {
-            return $this->apiClient->createWebsite(
+            // Log attempt
+            $this->logger->info('Creating Botguard website', [
+                'domain' => $orderData['domain'],
+                'user_id' => $user['id']
+            ]);
+            
+            $result = $this->apiClient->createWebsite(
                 $orderData['domain'], 
                 $user['id']
             );
+            
+            // Log success
+            $this->logger->info('Botguard website created', [
+                'domain' => $orderData['domain'],
+                'website_id' => $result['id'] ?? 'unknown'
+            ]);
+            
+            return $result;
         } catch (Exception $e) {
+            $this->logger->error('Botguard website creation failed', [
+                'domain' => $orderData['domain'],
+                'user_id' => $user['id'],
+                'error' => $e->getMessage()
+            ]);
+            
             throw new OrderCreationException(
                 "Botguard website creation failed: " . $e->getMessage(), 
-                OrderCreationException::WEBSITE_CREATION_FAILED
+                OrderCreationException::WEBSITE_CREATION_FAILED,
+                $e
             );
         }
     }
@@ -423,11 +491,29 @@ class BlackwallOrderManager {
      */
     private function createGatekeeperUser($user) {
         try {
-            $this->apiClient->createGatekeeperUser($user['id']);
+            // Log attempt
+            $this->logger->info('Creating GateKeeper user', [
+                'user_id' => $user['id']
+            ]);
+            
+            $result = $this->apiClient->createGatekeeperUser($user['id']);
+            
+            // Log success
+            $this->logger->info('GateKeeper user created', [
+                'user_id' => $user['id']
+            ]);
+            
+            return $result;
         } catch (Exception $e) {
+            $this->logger->error('GateKeeper user creation failed', [
+                'user_id' => $user['id'],
+                'error' => $e->getMessage()
+            ]);
+            
             throw new OrderCreationException(
                 "Gatekeeper user creation failed: " . $e->getMessage(), 
-                OrderCreationException::GATEKEEPER_USER_CREATION_FAILED
+                OrderCreationException::GATEKEEPER_USER_CREATION_FAILED,
+                $e
             );
         }
     }
@@ -445,16 +531,41 @@ class BlackwallOrderManager {
             // Dynamically get domain IPs
             $domainIps = $this->getDomainIps($orderData['domain']);
             
-            $this->apiClient->createGatekeeperWebsite(
+            // Log attempt
+            $this->logger->info('Creating GateKeeper website', [
+                'domain' => $orderData['domain'],
+                'user_id' => $user['id'],
+                'ip_count' => [
+                    'ipv4' => count($domainIps['ipv4']),
+                    'ipv6' => count($domainIps['ipv6'])
+                ]
+            ]);
+            
+            $result = $this->apiClient->createGatekeeperWebsite(
                 $orderData['domain'], 
                 $user['id'], 
                 $domainIps['ipv4'], 
                 $domainIps['ipv6']
             );
+            
+            // Log success
+            $this->logger->info('GateKeeper website created', [
+                'domain' => $orderData['domain'],
+                'user_id' => $user['id']
+            ]);
+            
+            return $result;
         } catch (Exception $e) {
+            $this->logger->error('GateKeeper website creation failed', [
+                'domain' => $orderData['domain'],
+                'user_id' => $user['id'],
+                'error' => $e->getMessage()
+            ]);
+            
             throw new OrderCreationException(
-                "Gatekeeper website creation failed: " .$e->getMessage(), 
-                OrderCreationException::GATEKEEPER_WEBSITE_CREATION_FAILED
+                "Gatekeeper website creation failed: " . $e->getMessage(), 
+                OrderCreationException::GATEKEEPER_WEBSITE_CREATION_FAILED,
+                $e
             );
         }
     }
@@ -484,7 +595,7 @@ class BlackwallOrderManager {
         
         try {
             $ipv4 = gethostbynamel($domain);
-            return $ipv4 ?: $defaultIp;
+            return is_array($ipv4) && !empty($ipv4) ? $ipv4 : $defaultIp;
         } catch (Exception $e) {
             $this->logger->warning('IPv4 Lookup Failed', [
                 'domain' => $domain,
@@ -506,17 +617,20 @@ class BlackwallOrderManager {
         
         try {
             $ipv6 = [];
-            $records = dns_get_record($domain, DNS_AAAA);
             
-            if ($records) {
-                foreach ($records as $record) {
-                    if (isset($record['ipv6'])) {
-                        $ipv6[] = $record['ipv6'];
+            if (function_exists('dns_get_record')) {
+                $records = dns_get_record($domain, DNS_AAAA);
+                
+                if (is_array($records)) {
+                    foreach ($records as $record) {
+                        if (isset($record['ipv6'])) {
+                            $ipv6[] = $record['ipv6'];
+                        }
                     }
                 }
             }
             
-            return $ipv6 ?: $defaultIpv6;
+            return !empty($ipv6) ? $ipv6 : $defaultIpv6;
         } catch (Exception $e) {
             $this->logger->warning('IPv6 Lookup Failed', [
                 'domain' => $domain,
@@ -542,8 +656,13 @@ class BlackwallOrderManager {
             'error_message' => $e->getMessage()
         ]);
 
-        // Optional: Send alert to admin or support team
-        $this->sendAdminAlert($e, $orderCreationId, $orderData);
+        // Send an alert for certain error types
+        if (in_array($e->getCode(), [
+            OrderCreationException::CIRCUIT_BREAKER_OPEN,
+            OrderCreationException::RETRY_LIMIT_EXCEEDED
+        ])) {
+            $this->sendAdminAlert($e, $orderCreationId, $orderData);
+        }
     }
 
     /**
@@ -562,7 +681,7 @@ class BlackwallOrderManager {
             'trace' => $e->getTraceAsString()
         ]);
 
-        // Send critical alert
+        // Send critical alert for all unexpected errors
         $this->sendCriticalAdminAlert($e, $orderCreationId, $orderData);
     }
 
@@ -581,6 +700,8 @@ class BlackwallOrderManager {
             'domain' => $orderData['domain'] ?? 'N/A',
             'error_message' => $e->getMessage()
         ]);
+        
+        // In a real implementation, add code to send email or other notifications here
     }
 
     /**
@@ -598,8 +719,7 @@ class BlackwallOrderManager {
             'error_message' => $e->getMessage(),
             'trace' => $e->getTraceAsString()
         ]);
+        
+        // In a real implementation, add code to send urgent notifications here
     }
 }
-
-// Namespace closing tag
-} // End of namespace Blackwall\OrderProcessing
