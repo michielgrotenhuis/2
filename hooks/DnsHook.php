@@ -70,10 +70,7 @@ class BlackwallDnsHook
                 
             if (!empty($domain)) {
                 // Define the required DNS records for Blackwall protection
-                $required_records = [
-                    'A' => [BlackwallConstants::GATEKEEPER_NODE_1_IPV4, BlackwallConstants::GATEKEEPER_NODE_2_IPV4],
-                    'AAAA' => [BlackwallConstants::GATEKEEPER_NODE_1_IPV6, BlackwallConstants::GATEKEEPER_NODE_2_IPV6]
-                ];
+                $required_records = BlackwallConstants::getDnsRecords();
                 
                 // Function to check DNS configuration
                 $check_dns_configuration = function($domain, $required_records) use ($debug_log) {
@@ -120,11 +117,11 @@ class BlackwallDnsHook
                 $is_dns_configured = $check_dns_configuration($domain, $required_records);
                 
                 // Function to check if the time has expired
-                $is_time_expired = function($order_id, $wait_time_hours) use ($debug_log) {
+                $is_time_expired = function($order_id, $wait_time_hours) use ($debug_log, $domain) {
                     $debug_log("Checking time expiration for order ID: {$order_id}, wait time: {$wait_time_hours} hours");
                     
                     // Check if there's a stored DNS check time
-                    $dns_check_file = sys_get_temp_dir() . '/blackwall_dns_check_' . md5($order_id) . '.json';
+                    $dns_check_file = sys_get_temp_dir() . '/blackwall_dns_check_' . md5($domain . $order_id) . '.json';
                     if (file_exists($dns_check_file)) {
                         $dns_check_data = json_decode(file_get_contents($dns_check_file), true);
                         if (isset($dns_check_data['check_time'])) {
@@ -182,9 +179,9 @@ class BlackwallDnsHook
                         $blackwall = new Blackwall();
                         
                         // Create the ticket using the module's method
-                        $blackwall->create_dns_configuration_ticket($domain, $client_id, $params['id']);
+                        $result = $blackwall->create_dns_configuration_ticket($domain, $client_id, $params['id']);
                         
-                        $debug_log("Ticket creation initiated");
+                        $debug_log("Ticket creation result: " . ($result ? 'Success' : 'Failed'));
                     } catch (Exception $e) {
                         $debug_log("Exception occurred when creating ticket: " . $e->getMessage());
                         $debug_log("Exception trace: " . $e->getTraceAsString());
