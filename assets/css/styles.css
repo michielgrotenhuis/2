@@ -1,0 +1,146 @@
+/**
+ * Blackwall Client Styles
+ */
+
+/* Tab System */
+#blackwall-tab-system {
+    font-family: Arial, sans-serif;
+    margin-bottom: 20px;
+}
+
+#blackwall-tab-system .blackwall-tab-buttons {
+    overflow: hidden;
+    border: 1px solid #ccc;
+    background-color: #f1f1f1;
+    display: flex;
+}
+
+#blackwall-tab-system .blackwall-tab-button {
+    background-color: inherit;
+    float: left;
+    border: none;
+    outline: none;
+    cursor: pointer;
+    padding: 14px 16px;
+    transition: 0.3s;
+    font-size: 14px;
+    flex: 1;
+}
+
+#blackwall-tab-system .blackwall-tab-button i {
+    margin-right: 5px;
+}
+
+#blackwall-tab-system .blackwall-tab-button:hover {
+    background-color: #ddd;
+}
+
+#blackwall-tab-system .blackwall-tab-button.active {
+    background-color: #fff;
+    border-bottom: 2px solid #4CAF50;
+    color: #4CAF50;
+}
+
+#blackwall-tab-system .blackwall-tab-content {
+    display: none;
+    padding: 0;
+    border: 1px solid #ccc;
+    border-top: none;
+}
+
+#blackwall-tab-system .blackwall-tab-content.active {
+    display: block;
+}
+
+/* iFrame Header */
+#blackwall-tab-system .blackwall-iframe-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 15px;
+    background-color: #f8f8f8;
+    border-bottom: 1px solid #ddd;
+}
+
+#blackwall-tab-system .blackwall-iframe-header span {
+    font-weight: bold;
+}
+
+#blackwall-tab-system .refresh-btn {
+    padding: 5px 10px;
+    background-color: #f1f1f1;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: 0.3s;
+}
+
+#blackwall-tab-system .refresh-btn:hover {
+    background-color: #e3e3e3;
+}
+
+/* Content */
+#blackwall-tab-system .blackwall-tab-content iframe {
+    width: 100%;
+    height: 2100px;
+    border: none;
+}
+
+#blackwall-tab-system .padding20 {
+    padding: 20px;
+}
+
+/* Status bars */
+.green-info {
+    background: #0c840c;
+    color: white;
+    border: 1px solid #096d09;
+    padding: 15px;
+    border-radius: 5px;
+    margin-bottom: 20px;
+}
+
+.red-info {
+    background: #d80000;
+    color: white;
+    border: 1px solid #a00000;
+    padding: 15px;
+    border-radius: 5px;
+    margin-bottom: 20px;
+}
+
+/* Helper elements */
+code {
+    background: #f5f5f5;
+    padding: 2px 5px;
+    border-radius: 3px;
+    border: 1px solid #ddd;
+    font-family: monospace;
+}
+
+.copy-btn {
+    display: inline-block;
+    padding: 3px 8px;
+    background: #f8f8f8;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    cursor: pointer;
+    color: #333;
+    text-decoration: none;
+}
+
+.copy-btn:hover {
+    background: #ebebeb;
+}
+
+.copy-notification {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    padding: 10px 20px;
+    border-radius: 5px;
+    z-index: 1000;
+    display: none;
+}
