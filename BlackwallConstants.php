@@ -51,21 +51,4 @@ class BlackwallConstants {
                 'humans' => 'grant',
                 'security_issues' => 'deny',
                 'content_scrapers' => 'deny',
-                'emulated_humans' => 'captcha',
-                'suspicious_behaviour' => 'captcha'
-            ],
-            'loadbalancer' => [
-                'upstreams_use_https' => true,
-                'enable_http3' => true,
-                'force_https' => true,
-                'cache_static_files' => true,
-                'cache_dynamic_pages' => false,
-                'ddos_protection' => false,
-                'ddos_protection_advanced' => false,
-                'botguard_protection' => true,
-                'certs_issuer' => 'letsencrypt',
-                'force_subdomains_redirect' => false
-            ]
-        ];
-    }
-}
+                'emulated_humans' =>
