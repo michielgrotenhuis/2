@@ -6,6 +6,8 @@ class DnsHelper
 {
     private $module_name;
     private $user_id = null;
+    private $dnsCache = []; // Cache for DNS lookups
+    private $cacheTTL = 3600; // Cache time-to-live in seconds (1 hour)
     
     /**
      * Constructor
@@ -78,22 +80,31 @@ class DnsHelper
     }
     
     /**
-     * Get A record IPs for a domain
+     * Get A record IPs for a domain (with caching)
      * 
      * @param string $domain Domain to lookup
      * @return array Array of IPs found or default IP if lookup fails
      */
     public function getDomainARecords($domain) {
+        // Check cache first
+        if (isset($this->dnsCache[$domain]['A']) && 
+            isset($this->dnsCache[$domain]['timestamp']) && 
+            (time() - $this->dnsCache[$domain]['timestamp'] < $this->cacheTTL)) {
+            
+            $this->log('debug', 'Using cached DNS A records', [
+                'domain' => $domain,
+                'cached_ips' => $this->dnsCache[$domain]['A']
+            ]);
+            
+            return $this->dnsCache[$domain]['A'];
+        }
+        
         // Default fallback IP if DNS lookup fails
         $default_ip = ['1.23.45.67'];
         
         try {
             // Log the DNS lookup attempt
-            $this->log(
-                'info', 
-                'DNS Lookup', 
-                ['domain' => $domain]
-            );
+            $this->log('info', 'DNS Lookup', ['domain' => $domain]);
             
             // Perform DNS lookup for A records
             $dns_records = @dns_get_record($domain, DNS_A);
@@ -109,14 +120,14 @@ class DnsHelper
                 }
                 
                 // Log the results
-                $this->log(
-                    'info', 
-                    'DNS Lookup Results', 
-                    ['domain' => $domain, 'ips' => $ips]
-                );
+                $this->log('info', 'DNS Lookup Results', ['domain' => $domain, 'ips' => $ips]);
                 
-                // If we found IPs, return them
+                // If we found IPs, cache and return them
                 if (!empty($ips)) {
+                    // Cache the results
+                    $this->dnsCache[$domain]['A'] = $ips;
+                    $this->dnsCache[$domain]['timestamp'] = time();
+                    
                     return $ips;
                 }
             }
@@ -135,13 +146,13 @@ class DnsHelper
                     }
                     
                     // Log the www results
-                    $this->log(
-                        'info', 
-                        'DNS Lookup Results (www)', 
-                        ['domain' => $www_domain, 'ips' => $www_ips]
-                    );
+                    $this->log('info', 'DNS Lookup Results (www)', ['domain' => $www_domain, 'ips' => $www_ips]);
                     
                     if (!empty($www_ips)) {
+                        // Cache the results
+                        $this->dnsCache[$domain]['A'] = $www_ips;
+                        $this->dnsCache[$domain]['timestamp'] = time();
+                        
                         return $www_ips;
                     }
                 }
@@ -151,52 +162,251 @@ class DnsHelper
             $ip = gethostbyname($domain);
             if ($ip && $ip !== $domain) {
                 // Log the gethostbyname result
-                $this->log(
-                    'info', 
-                    'DNS Lookup (gethostbyname)', 
-                    ['domain' => $domain, 'ip' => $ip]
-                );
+                $this->log('info', 'DNS Lookup (gethostbyname)', ['domain' => $domain, 'ip' => $ip]);
+                
+                // Cache the result
+                $this->dnsCache[$domain]['A'] = [$ip];
+                $this->dnsCache[$domain]['timestamp'] = time();
+                
                 return [$ip];
             }
             
-            // If all lookups failed, return default IP
-            $this->log(
-                'warning', 
-                'DNS Lookup Failed', 
+            // If all lookups failed, cache and return default IP
+            $this->log('warning', 'DNS Lookup Failed', 
                 ['domain' => $domain, 'using_default' => $default_ip],
                 'DNS lookup failed, using default IP'
             );
+            
+            // Cache the default IP
+            $this->dnsCache[$domain]['A'] = $default_ip;
+            $this->dnsCache[$domain]['timestamp'] = time();
+            
             return $default_ip;
         } catch (Exception $e) {
             // Log any errors and return default IP
-            $this->log(
-                'error', 
-                'DNS Lookup Error', 
+            $this->log('error', 'Error checking connected node', 
+                ['domain' => $domain, 'error' => $e->getMessage()], 
+                $e->getMessage(), 
+                $e->getTraceAsString());
+                
+            return null;
+        }
+    }
+
+    /**
+     * Register the DNS check hook for a domain
+     * 
+     * @param string $domain Domain to check
+     * @param int $order_id Order ID
+     * @param int $client_id Client ID (optional)
+     * @return bool Success status
+     */
+    public function registerDnsCheckHook($domain, $order_id, $client_id = null)
+    {
+        try {
+            $this->log('info', 'Registering DNS Check Hook', 
+                ['domain' => $domain, 'order_id' => $order_id]
+            );
+            
+            // Store DNS check meta data for the hook to use
+            $meta_data = [
+                'domain' => $domain,
+                'order_id' => $order_id,
+                'check_time' => time(),
+                'product_id' => 105, // Hardcoded to match the hook
+                'client_id' => $client_id ?? $this->user_id ?? 0
+            ];
+            
+            // Store this in a database table or file for the hook to access
+            // For this example, we'll use a simple file-based approach
+            $dns_check_file = sys_get_temp_dir() . '/blackwall_dns_check_' . md5($domain . $order_id) . '.json';
+            file_put_contents($dns_check_file, json_encode($meta_data));
+            
+            $this->log('info', 'DNS Check Data Stored', 
+                ['file' => $dns_check_file, 'data' => $meta_data]
+            );
+            
+            return true;
+        } catch (Exception $e) {
+            $this->log('error', 'Error Registering DNS Check Hook', 
+                ['domain' => $domain, 'order_id' => $order_id],
+                $e->getMessage(),
+                $e->getTraceAsString()
+            );
+            return false;
+        }
+    }
+    
+    /**
+     * Clear DNS cache
+     * 
+     * @param string $domain Optional domain to clear from cache
+     * @return bool Success status
+     */
+    public function clearDnsCache($domain = null)
+    {
+        if ($domain && isset($this->dnsCache[$domain])) {
+            unset($this->dnsCache[$domain]);
+            $this->log('debug', 'Cleared DNS cache for domain', ['domain' => $domain]);
+        } else {
+            $this->dnsCache = [];
+            $this->log('debug', 'Cleared all DNS cache');
+        }
+        
+        return true;
+    }
+    
+    /**
+     * Get DNS check status for a domain
+     * 
+     * @param string $domain Domain to check
+     * @return array DNS check status information
+     */
+    public function getDnsCheckStatus($domain)
+    {
+        if (!class_exists('BlackwallConstants')) {
+            require_once(dirname(dirname(__FILE__)) . '/BlackwallConstants.php');
+        }
+        
+        $gatekeeper_nodes = [
+            'bg-gk-01' => [
+                'ipv4' => BlackwallConstants::GATEKEEPER_NODE_1_IPV4,
+                'ipv6' => BlackwallConstants::GATEKEEPER_NODE_1_IPV6
+            ],
+            'bg-gk-02' => [
+                'ipv4' => BlackwallConstants::GATEKEEPER_NODE_2_IPV4,
+                'ipv6' => BlackwallConstants::GATEKEEPER_NODE_2_IPV6
+            ]
+        ];
+        
+        // Default check result
+        $dns_check = [
+            'status' => false,
+            'connected_to' => null,
+            'ipv4_status' => false,
+            'ipv6_status' => false,
+            'ipv4_records' => [],
+            'ipv6_records' => [],
+            'missing_records' => [
+                [
+                    'type' => 'A',
+                    'value' => BlackwallConstants::GATEKEEPER_NODE_1_IPV4
+                ],
+                [
+                    'type' => 'AAAA',
+                    'value' => BlackwallConstants::GATEKEEPER_NODE_1_IPV6
+                ]
+            ]
+        ];
+        
+        // Only try to check if domain is set
+        if(!empty($domain)) {
+            try {
+                // Get A and AAAA records - use cached values if available
+                $dns_check['ipv4_records'] = $this->getDomainARecords($domain);
+                
+                // Check if matches our nodes
+                foreach ($dns_check['ipv4_records'] as $ip) {
+                    if($ip == BlackwallConstants::GATEKEEPER_NODE_1_IPV4) {
+                        $dns_check['ipv4_status'] = true;
+                        $dns_check['connected_to'] = 'bg-gk-01';
+                        break;
+                    } elseif($ip == BlackwallConstants::GATEKEEPER_NODE_2_IPV4) {
+                        $dns_check['ipv4_status'] = true;
+                        $dns_check['connected_to'] = 'bg-gk-02';
+                        break;
+                    }
+                }
+                
+                // Only check AAAA if we found a matching A record
+                if($dns_check['ipv4_status']) {
+                    // Get AAAA records
+                    $dns_check['ipv6_records'] = $this->getDomainAAAARecords($domain);
+                    
+                    // Check if matches our nodes - use the same node we found for A record
+                    foreach ($dns_check['ipv6_records'] as $ipv6) {
+                        if($dns_check['connected_to'] == 'bg-gk-01' && $ipv6 == BlackwallConstants::GATEKEEPER_NODE_1_IPV6) {
+                            $dns_check['ipv6_status'] = true;
+                            break;
+                        } elseif($dns_check['connected_to'] == 'bg-gk-02' && $ipv6 == BlackwallConstants::GATEKEEPER_NODE_2_IPV6) {
+                            $dns_check['ipv6_status'] = true;
+                            break;
+                        }
+                    }
+                }
+                
+                // Status is true if both IPv4 and IPv6 match
+                $dns_check['status'] = $dns_check['ipv4_status'] && $dns_check['ipv6_status'];
+                
+                // Update missing records based on which node we're connected to
+                if($dns_check['connected_to']) {
+                    $dns_check['missing_records'] = [];
+                    
+                    if(!$dns_check['ipv4_status']) {
+                        $dns_check['missing_records'][] = [
+                            'type' => 'A',
+                            'value' => $gatekeeper_nodes[$dns_check['connected_to']]['ipv4']
+                        ];
+                    }
+                    
+                    if(!$dns_check['ipv6_status']) {
+                        $dns_check['missing_records'][] = [
+                            'type' => 'AAAA',
+                            'value' => $gatekeeper_nodes[$dns_check['connected_to']]['ipv6']
+                        ];
+                    }
+                }
+            } catch(Exception $e) {
+                // Silently fail - keep default values
+                $this->log('error', 'Error checking DNS status', 
+                    ['domain' => $domain, 'error' => $e->getMessage()], 
+                    $e->getMessage(), 
+                    $e->getTraceAsString());
+            }
+        }
+        
+        return $dns_check;
+    }
+}'DNS Lookup Error', 
                 ['domain' => $domain, 'error' => $e->getMessage()],
                 $e->getMessage(),
                 $e->getTraceAsString()
             );
+            
+            // Cache the default IP on error
+            $this->dnsCache[$domain]['A'] = $default_ip;
+            $this->dnsCache[$domain]['timestamp'] = time();
+            
             return $default_ip;
         }
     }
 
     /**
-     * Get AAAA record IPs for a domain (IPv6)
+     * Get AAAA record IPs for a domain (IPv6) with caching
      * 
      * @param string $domain Domain to lookup
      * @return array Array of IPv6 addresses found or default IPv6 if lookup fails
      */
     public function getDomainAAAARecords($domain) {
+        // Check cache first
+        if (isset($this->dnsCache[$domain]['AAAA']) && 
+            isset($this->dnsCache[$domain]['timestamp']) && 
+            (time() - $this->dnsCache[$domain]['timestamp'] < $this->cacheTTL)) {
+            
+            $this->log('debug', 'Using cached DNS AAAA records', [
+                'domain' => $domain,
+                'cached_ipv6s' => $this->dnsCache[$domain]['AAAA']
+            ]);
+            
+            return $this->dnsCache[$domain]['AAAA'];
+        }
+        
         // Default fallback IPv6 if DNS lookup fails
         $default_ipv6 = ['2a01:4f8:c2c:5a72::1'];
         
         try {
             // Log the DNS lookup attempt
-            $this->log(
-                'info', 
-                'DNS AAAA Lookup', 
-                ['domain' => $domain]
-            );
+            $this->log('info', 'DNS AAAA Lookup', ['domain' => $domain]);
             
             // Perform DNS lookup for AAAA records
             $dns_records = @dns_get_record($domain, DNS_AAAA);
@@ -212,14 +422,14 @@ class DnsHelper
                 }
                 
                 // Log the results
-                $this->log(
-                    'info', 
-                    'DNS AAAA Lookup Results', 
-                    ['domain' => $domain, 'ipv6s' => $ipv6s]
-                );
+                $this->log('info', 'DNS AAAA Lookup Results', ['domain' => $domain, 'ipv6s' => $ipv6s]);
                 
-                // If we found IPv6 addresses, return them
+                // If we found IPv6 addresses, cache and return them
                 if (!empty($ipv6s)) {
+                    // Cache the results
+                    $this->dnsCache[$domain]['AAAA'] = $ipv6s;
+                    $this->dnsCache[$domain]['timestamp'] = time();
+                    
                     return $ipv6s;
                 }
             }
@@ -238,35 +448,43 @@ class DnsHelper
                     }
                     
                     // Log the www results
-                    $this->log(
-                        'info', 
-                        'DNS AAAA Lookup Results (www)', 
+                    $this->log('info', 'DNS AAAA Lookup Results (www)', 
                         ['domain' => $www_domain, 'ipv6s' => $www_ipv6s]
                     );
                     
                     if (!empty($www_ipv6s)) {
+                        // Cache the results
+                        $this->dnsCache[$domain]['AAAA'] = $www_ipv6s;
+                        $this->dnsCache[$domain]['timestamp'] = time();
+                        
                         return $www_ipv6s;
                     }
                 }
             }
             
-            // If all lookups failed, return default IPv6
-            $this->log(
-                'warning', 
-                'DNS AAAA Lookup Failed', 
+            // If all lookups failed, cache and return default IPv6
+            $this->log('warning', 'DNS AAAA Lookup Failed', 
                 ['domain' => $domain, 'using_default' => $default_ipv6],
                 'DNS AAAA lookup failed, using default IPv6'
             );
+            
+            // Cache the default IPv6
+            $this->dnsCache[$domain]['AAAA'] = $default_ipv6;
+            $this->dnsCache[$domain]['timestamp'] = time();
+            
             return $default_ipv6;
         } catch (Exception $e) {
             // Log any errors and return default IPv6
-            $this->log(
-                'error', 
-                'DNS AAAA Lookup Error', 
+            $this->log('error', 'DNS AAAA Lookup Error', 
                 ['domain' => $domain, 'error' => $e->getMessage()],
                 $e->getMessage(),
                 $e->getTraceAsString()
             );
+            
+            // Cache the default IPv6 on error
+            $this->dnsCache[$domain]['AAAA'] = $default_ipv6;
+            $this->dnsCache[$domain]['timestamp'] = time();
+            
             return $default_ipv6;
         }
     }
@@ -286,20 +504,18 @@ class DnsHelper
         $required_records = BlackwallConstants::getDnsRecords();
         
         try {
-            $this->log(
-                'info', 
-                'DNS Configuration Check', 
+            $this->log('info', 'DNS Configuration Check', 
                 ['domain' => $domain, 'required' => $required_records]
             );
             
-            // Get current DNS records for the domain
-            $a_records = @dns_get_record($domain, DNS_A);
-            $aaaa_records = @dns_get_record($domain, DNS_AAAA);
+            // Get current DNS records for the domain - use cached values if available
+            $a_ips = $this->getDomainARecords($domain);
+            $aaaa_ips = $this->getDomainAAAARecords($domain);
             
             // Check if any of the required A records match
             $has_valid_a_record = false;
-            foreach ($a_records as $record) {
-                if (isset($record['ip']) && in_array($record['ip'], $required_records['A'])) {
+            foreach ($a_ips as $ip) {
+                if (in_array($ip, $required_records['A'])) {
                     $has_valid_a_record = true;
                     break;
                 }
@@ -307,8 +523,8 @@ class DnsHelper
             
             // Check if any of the required AAAA records match
             $has_valid_aaaa_record = false;
-            foreach ($aaaa_records as $record) {
-                if (isset($record['ipv6']) && in_array($record['ipv6'], $required_records['AAAA'])) {
+            foreach ($aaaa_ips as $ipv6) {
+                if (in_array($ipv6, $required_records['AAAA'])) {
                     $has_valid_aaaa_record = true;
                     break;
                 }
@@ -316,77 +532,66 @@ class DnsHelper
             
             $result = $has_valid_a_record && $has_valid_aaaa_record;
             
-            $this->log(
-                'info', 
-                'DNS Configuration Check Result', 
-                [
-                    'domain' => $domain,
-                    'has_valid_a' => $has_valid_a_record,
-                    'has_valid_aaaa' => $has_valid_aaaa_record,
-                    'result' => $result ? 'Configured correctly' : 'Not configured correctly'
-                ]
-            );
+            $this->log('info', 'DNS Configuration Check Result', [
+                'domain' => $domain,
+                'has_valid_a' => $has_valid_a_record,
+                'has_valid_aaaa' => $has_valid_aaaa_record,
+                'result' => $result ? 'Configured correctly' : 'Not configured correctly'
+            ]);
             
             return $result;
         } catch (Exception $e) {
-            $this->log(
-                'error', 
-                'DNS Configuration Check Error', 
+            $this->log('error', 'DNS Configuration Check Error', 
                 ['domain' => $domain, 'error' => $e->getMessage()],
                 $e->getMessage(),
                 $e->getTraceAsString()
             );
+                
             return false;
         }
     }
 
     /**
-     * Register the DNS check hook for a domain
+     * Get the DNS node that the domain is connected to
      * 
      * @param string $domain Domain to check
-     * @param int $order_id Order ID
-     * @param int $client_id Client ID (optional)
-     * @return bool Success status
+     * @return array|null Node information or null if not connected
      */
-    public function registerDnsCheckHook($domain, $order_id, $client_id = null)
+    public function getConnectedNode($domain)
     {
-        try {
-            $this->log(
-                'info', 
-                'Registering DNS Check Hook', 
-                ['domain' => $domain, 'order_id' => $order_id]
-            );
-            
-            // Store DNS check meta data for the hook to use
-            $meta_data = [
-                'domain' => $domain,
-                'order_id' => $order_id,
-                'check_time' => time(),
-                'product_id' => 105, // Hardcoded to match the hook
-                'client_id' => $client_id ?? $this->user_id ?? 0
-            ];
-            
-            // Store this in a database table or file for the hook to access
-            // For this example, we'll use a simple file-based approach
-            $dns_check_file = sys_get_temp_dir() . '/blackwall_dns_check_' . md5($domain . $order_id) . '.json';
-            file_put_contents($dns_check_file, json_encode($meta_data));
-            
-            $this->log(
-                'info', 
-                'DNS Check Data Stored', 
-                ['file' => $dns_check_file, 'data' => $meta_data]
-            );
-            
-            return true;
-        } catch (Exception $e) {
-            $this->log(
-                'error', 
-                'Error Registering DNS Check Hook', 
-                ['domain' => $domain, 'order_id' => $order_id],
-                $e->getMessage(),
-                $e->getTraceAsString()
-            );
-            return false;
+        if (!class_exists('BlackwallConstants')) {
+            require_once(dirname(dirname(__FILE__)) . '/BlackwallConstants.php');
         }
-    }
-}
+        
+        $gatekeeper_nodes = [
+            'bg-gk-01' => [
+                'ipv4' => BlackwallConstants::GATEKEEPER_NODE_1_IPV4,
+                'ipv6' => BlackwallConstants::GATEKEEPER_NODE_1_IPV6
+            ],
+            'bg-gk-02' => [
+                'ipv4' => BlackwallConstants::GATEKEEPER_NODE_2_IPV4,
+                'ipv6' => BlackwallConstants::GATEKEEPER_NODE_2_IPV6
+            ]
+        ];
+        
+        try {
+            // Get DNS records - use cached values if available
+            $ipv4_records = $this->getDomainARecords($domain);
+            $ipv6_records = $this->getDomainAAAARecords($domain);
+            
+            // Check if domain is connected to a node
+            foreach ($gatekeeper_nodes as $node_name => $node_ips) {
+                if (in_array($node_ips['ipv4'], $ipv4_records) || in_array($node_ips['ipv6'], $ipv6_records)) {
+                    return [
+                        'name' => $node_name,
+                        'ipv4' => $node_ips['ipv4'],
+                        'ipv6' => $node_ips['ipv6'],
+                        'ipv4_status' => in_array($node_ips['ipv4'], $ipv4_records),
+                        'ipv6_status' => in_array($node_ips['ipv6'], $ipv6_records)
+                    ];
+                }
+            }
+            
+            return null;
+        } catch (Exception $e) {
+            $this->log('error',
