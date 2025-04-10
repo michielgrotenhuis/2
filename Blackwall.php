@@ -135,84 +135,6 @@ class Blackwall extends ProductModule
     public function asset_url($path) {
         return '/modules/Blackwall/assets/' . $path;
     }
-}
-
-/**
- * Constants for Blackwall
- */
-class BlackwallConstants {
-    // Status constants
-    const STATUS_ONLINE = 'online';
-    const STATUS_PAUSED = 'paused';
-    const STATUS_SETUP = 'setup';
-    
-    // GateKeeper node IPs
-    const GATEKEEPER_NODE_1_IPV4 = '49.13.161.213';
-    const GATEKEEPER_NODE_1_IPV6 = '2a01:4f8:c2c:5a72::1';
-    const GATEKEEPER_NODE_2_IPV4 = '116.203.242.28';
-    const GATEKEEPER_NODE_2_IPV6 = '2a01:4f8:1c1b:7008::1';
-    
-    /**
-     * Get the required DNS records
-     * 
-     * @return array DNS records
-     */
-    public static function getDnsRecords() {
-        return [
-            'A' => [self::GATEKEEPER_NODE_1_IPV4, self::GATEKEEPER_NODE_2_IPV4],
-            'AAAA' => [self::GATEKEEPER_NODE_1_IPV6, self::GATEKEEPER_NODE_2_IPV6]
-        ];
-    }
-    
-    /**
-     * Get default website settings for GateKeeper
-     * 
-     * @return array Default website settings
-     */
-    public static function getDefaultWebsiteSettings() {
-        return [
-            'rulesets' => [
-                'wordpress' => false,
-                'joomla' => false,
-                'drupal' => false,
-                'cpanel' => false,
-                'bitrix' => false,
-                'dokuwiki' => false,
-                'xenforo' => false,
-                'nextcloud' => false,
-                'prestashop' => false
-            ],
-            'rules' => [
-                'search_engines' => 'grant',
-                'social_networks' => 'grant',
-                'services_and_payments' => 'grant',
-                'humans' => 'grant',
-                'security_issues' => 'deny',
-                'content_scrapers' => 'deny',
-                'emulated_humans' => 'captcha',
-                'suspicious_behaviour' => 'captcha'
-            ],
-            'loadbalancer' => [
-                'upstreams_use_https' => true,
-                'enable_http3' => true,
-                'force_https' => true,
-                'cache_static_files' => true,
-                'cache_dynamic_pages' => false,
-                'ddos_protection' => false,
-                'ddos_protection_advanced' => false,
-                'botguard_protection' => true,
-                'certs_issuer' => 'letsencrypt',
-                'force_subdomains_redirect' => false
-            ]
-        ];
-    }
-}
-
-// Register the DNS check hook at module load time
-if(file_exists(__DIR__ . '/hooks/DnsHook.php')) {
-    require_once(__DIR__ . '/hooks/DnsHook.php');
-    Hook::add("OrderActivated", 1, [BlackwallDnsHook::class, 'handleOrderActivated']);
-}
     
     /**
      * Load helper classes
@@ -220,6 +142,11 @@ if(file_exists(__DIR__ . '/hooks/DnsHook.php')) {
     private function loadHelpers() 
     {
         $helper_dir = __DIR__ . '/helpers/';
+        
+        // Load BlackwallConstants first - ensure it's only loaded once
+        if (!class_exists('BlackwallConstants')) {
+            require_once(__DIR__ . '/BlackwallConstants.php');
+        }
         
         if(file_exists($helper_dir . 'DnsHelper.php')) {
             require_once($helper_dir . 'DnsHelper.php');
@@ -487,20 +414,6 @@ if(file_exists(__DIR__ . '/hooks/DnsHook.php')) {
             'config' => $n_config,
         ];
     }
-        }
-        catch (Exception $e) {
-            $this->error = $e->getMessage();
-            if(isset($this->helpers['log'])) {
-                $this->helpers['log']->error(
-                    __FUNCTION__,
-                    ['order' => $this->order],
-                    $e->getMessage(),
-                    $e->getTraceAsString()
-                );
-            }
-            return false;
-        }
-    }
     
     /**
      * Delete service
@@ -572,7 +485,7 @@ if(file_exists(__DIR__ . '/hooks/DnsHook.php')) {
             if(isset($this->helpers['log'])) {
                 $this->helpers['log']->error(
                     'Error Creating DNS Configuration Ticket',
-                    ['domain' => $domain, 'client_id' => $client_id],
+                    ['domain' => $domain, 'client_id' => isset($client_id) ? $client_id : 'N/A'],
                     $e->getMessage(),
                     $e->getTraceAsString()
                 );
@@ -758,13 +671,23 @@ if(file_exists(__DIR__ . '/hooks/DnsHook.php')) {
                 );
             }
             
-            $gatekeeper_user_result = $this->helpers['api']->gatekeeperRequest('/user', 'POST', $gatekeeper_user_data);
-            
-            if(isset($this->helpers['log'])) {
-                $this->helpers['log']->info(
-                    'User created in GateKeeper',
-                    $gatekeeper_user_result
-                );
+            try {
+                $gatekeeper_user_result = $this->helpers['api']->gatekeeperRequest('/user', 'POST', $gatekeeper_user_data);
+                
+                if(isset($this->helpers['log'])) {
+                    $this->helpers['log']->info(
+                        'User created in GateKeeper',
+                        $gatekeeper_user_result
+                    );
+                }
+            } catch (Exception $e) {
+                // Log but continue
+                if(isset($this->helpers['log'])) {
+                    $this->helpers['log']->warning(
+                        'Error creating user in GateKeeper, continuing anyway',
+                        ['error' => $e->getMessage()]
+                    );
+                }
             }
             
             // Step 4: Also add the domain in GateKeeper - UPDATED WITH DNS LOOKUP
@@ -813,10 +736,7 @@ if(file_exists(__DIR__ . '/hooks/DnsHook.php')) {
                 // Continue execution - don't break the process for this
             }
             
-            // Step 5: Add a delay before updating the domain status
-            sleep(2);
-            
-            // Step 6: Activate the domain by setting status to online in Botguard
+            // Step 5: Activate the domain by setting status to online in Botguard
             $update_data = [
                 'status' => BlackwallConstants::STATUS_ONLINE
             ];
@@ -849,7 +769,7 @@ if(file_exists(__DIR__ . '/hooks/DnsHook.php')) {
                 }
             }
             
-            // Step 7: Also update the domain status in GateKeeper - UPDATED WITH DNS LOOKUP
+            // Step 6: Also update the domain status in GateKeeper - UPDATED WITH DNS LOOKUP
             try {
                 // Get the A records for the domain (refreshed)
                 $domain_ips = $this->helpers['dns']->getDomainARecords($user_domain);
@@ -885,7 +805,7 @@ if(file_exists(__DIR__ . '/hooks/DnsHook.php')) {
                     );
                 }
                 
-                // Step 8: Register hook for DNS verification after creation
+                // Step 7: Register hook for DNS verification after creation
                 if(isset($this->helpers['dns'])) {
                     $this->helpers['dns']->registerDnsCheckHook($user_domain, $this->order["id"]);
                 }
@@ -942,91 +862,6 @@ if(file_exists(__DIR__ . '/hooks/DnsHook.php')) {
             // For renewal, we just need to verify the domain is still active
             $domain = isset($this->options["config"]["blackwall_domain"]) 
                 ? $this->options["config"]["blackwall_domain"] 
-                : false;
-            
-            $user_id = isset($this->options["config"]["blackwall_user_id"]) 
-                ? $this->options["config"]["blackwall_user_id"] 
-                : false;
-
-            if(!$domain) {
-                $this->error = $this->lang["error_missing_domain"];
-                return false;
-            }
-
-            // Step 1: Call the Botguard API to set domain status to 'online'
-            $update_data = [
-                'status' => BlackwallConstants::STATUS_ONLINE
-            ];
-            
-            if(isset($this->helpers['log'])) {
-                $this->helpers['log']->info(
-                    'Setting domain status to online in Botguard',
-                    ['domain' => $domain, 'data' => $update_data]
-                );
-            }
-            
-            $result = $this->helpers['api']->request('/website/' . $domain, 'PUT', $update_data);
-            
-            if(isset($this->helpers['log'])) {
-                $this->helpers['log']->info(
-                    'Domain status set to online in Botguard',
-                    $result
-                );
-            }
-            
-            // Step 2: Also update the domain status in GateKeeper - UPDATED WITH DNS LOOKUP
-            try {
-                // Get the A records for the domain
-                $domain_ips = $this->helpers['dns']->getDomainARecords($domain);
-                // Get AAAA records if available
-                $domain_ipv6s = $this->helpers['dns']->getDomainAAAARecords($domain);
-                
-                // Get default settings but update status to online
-                $gatekeeper_settings = BlackwallConstants::getDefaultWebsiteSettings();
-                
-                $gatekeeper_update_data = [
-                    'domain' => $domain,
-                    'subdomain' => ['www'],
-                    'ip' => $domain_ips, // Use the dynamically looked up IPs
-                    'ipv6' => $domain_ipv6s, // Use the dynamically looked up IPv6 addresses
-                    'user_id' => $user_id,
-                    'status' => BlackwallConstants::STATUS_ONLINE,
-                    'settings' => $gatekeeper_settings
-                ];
-                
-                if(isset($this->helpers['log'])) {
-                    $this->helpers['log']->info(
-                        'Setting domain status to online in GateKeeper',
-                        ['domain' => $domain, 'data' => $gatekeeper_update_data]
-                    );
-                }
-                
-                $gatekeeper_result = $this->helpers['api']->gatekeeperRequest('/website/' . $domain, 'PUT', $gatekeeper_update_data);
-                
-                if(isset($this->helpers['log'])) {
-                    $this->helpers['log']->info(
-                        'Domain status set to online in GateKeeper',
-                        $gatekeeper_result
-                    );
-                }
-                
-                // Register hook for DNS verification after unsuspension
-                if(isset($this->helpers['dns'])) {
-                    $this->helpers['dns']->registerDnsCheckHook($domain, $this->order["id"]);
-                }
-            } catch (Exception $gk_e) {
-                // Log error but continue - don't fail if GateKeeper update fails
-                if(isset($this->helpers['log'])) {
-                    $this->helpers['log']->warning(
-                        'Error setting domain status in GateKeeper',
-                        ['domain' => $domain, 'error' => $gk_e->getMessage()],
-                        $gk_e->getMessage(),
-                        $gk_e->getTraceAsString()
-                    );
-                }
-            }
-            
-            return true; 
                 : false;
             
             $user_id = isset($this->options["config"]["blackwall_user_id"]) 
@@ -1215,4 +1050,103 @@ if(file_exists(__DIR__ . '/hooks/DnsHook.php')) {
     {
         try {
             $domain = isset($this->options["config"]["blackwall_domain"]) 
-                ? $this->options["config"]["blackwall_domain"]
+                ? $this->options["config"]["blackwall_domain"] 
+                : false;
+            
+            $user_id = isset($this->options["config"]["blackwall_user_id"]) 
+                ? $this->options["config"]["blackwall_user_id"] 
+                : false;
+
+            if(!$domain) {
+                $this->error = $this->lang["error_missing_domain"];
+                return false;
+            }
+
+            // Step 1: Call the Botguard API to set domain status to 'online'
+            $update_data = [
+                'status' => BlackwallConstants::STATUS_ONLINE
+            ];
+            
+            if(isset($this->helpers['log'])) {
+                $this->helpers['log']->info(
+                    'Setting domain status to online in Botguard',
+                    ['domain' => $domain, 'data' => $update_data]
+                );
+            }
+            
+            $result = $this->helpers['api']->request('/website/' . $domain, 'PUT', $update_data);
+            
+            if(isset($this->helpers['log'])) {
+                $this->helpers['log']->info(
+                    'Domain status set to online in Botguard',
+                    $result
+                );
+            }
+            
+            // Step 2: Also update the domain status in GateKeeper - UPDATED WITH DNS LOOKUP
+            try {
+                // Get the A records for the domain
+                $domain_ips = $this->helpers['dns']->getDomainARecords($domain);
+                // Get AAAA records if available
+                $domain_ipv6s = $this->helpers['dns']->getDomainAAAARecords($domain);
+                
+                // Get default settings but update status to online
+                $gatekeeper_settings = BlackwallConstants::getDefaultWebsiteSettings();
+                
+                $gatekeeper_update_data = [
+                    'domain' => $domain,
+                    'user_id' => $user_id,
+                    'subdomain' => ['www'],
+                    'ip' => $domain_ips, // Use the dynamically looked up IPs
+                    'ipv6' => $domain_ipv6s, // Use the dynamically looked up IPv6 addresses
+                    'status' => BlackwallConstants::STATUS_ONLINE,
+                    'settings' => $gatekeeper_settings
+                ];
+                
+                if(isset($this->helpers['log'])) {
+                    $this->helpers['log']->info(
+                        'Setting domain status to online in GateKeeper',
+                        ['domain' => $domain, 'data' => $gatekeeper_update_data]
+                    );
+                }
+                
+                $gatekeeper_result = $this->helpers['api']->gatekeeperRequest('/website/' . $domain, 'PUT', $gatekeeper_update_data);
+                
+                if(isset($this->helpers['log'])) {
+                    $this->helpers['log']->info(
+                        'Domain status set to online in GateKeeper',
+                        $gatekeeper_result
+                    );
+                }
+                
+                // Register hook for DNS verification after unsuspension
+                if(isset($this->helpers['dns'])) {
+                    $this->helpers['dns']->registerDnsCheckHook($domain, $this->order["id"]);
+                }
+            } catch (Exception $gk_e) {
+                // Log error but continue - don't fail if GateKeeper update fails
+                if(isset($this->helpers['log'])) {
+                    $this->helpers['log']->warning(
+                        'Error setting domain status in GateKeeper',
+                        ['domain' => $domain, 'error' => $gk_e->getMessage()],
+                        $gk_e->getMessage(),
+                        $gk_e->getTraceAsString()
+                    );
+                }
+            }
+            
+            return true;
+        } catch (Exception $e) {
+            $this->error = $e->getMessage();
+            if(isset($this->helpers['log'])) {
+                $this->helpers['log']->error(
+                    __FUNCTION__,
+                    ['order' => $this->order],
+                    $e->getMessage(),
+                    $e->getTraceAsString()
+                );
+            }
+            return false;
+        }
+    }
+}
