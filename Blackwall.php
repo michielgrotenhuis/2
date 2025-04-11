@@ -513,7 +513,7 @@ class Blackwall extends ProductModule
             if(isset($this->helpers['log'])) {
                 $this->helpers['log']->error(
                     'Error in delete function',
-                    ['domain' => $domain, 'user_id' => isset($user_id) ? $user_id : 'N/A'],
+                    ['domain' => isset($domain) ? $domain : 'N/A', 'user_id' => isset($user_id) ? $user_id : 'N/A'],
                     $e->getMessage(),
                     $e->getTraceAsString()
                 );
@@ -1071,6 +1071,42 @@ class Blackwall extends ProductModule
                 }
             }
             
+            // Step 2: Also update the domain status in GateKeeper
+            try {
+                // Get the A records for the domain
+                $domain_ips = $this->helpers['dns']->getDomainARecords($domain);
+                // Get AAAA records if available
+                $domain_ipv6s = $this->helpers['dns']->getDomainAAAARecords($domain);
+                
+                $gatekeeper_result = $this->helpers['api']->gatekeeperRequest(
+                    '/website/' . $domain, 
+                    'PUT', 
+                    [
+                        'status' => BlackwallConstants::STATUS_PAUSED,
+                        'ip' => $domain_ips,
+                        'ipv6' => $domain_ipv6s,
+                        'user_id' => $user_id
+                    ]
+                );
+                
+                if(isset($this->helpers['log'])) {
+                    $this->helpers['log']->info(
+                        'Domain status set to paused in GateKeeper',
+                        $gatekeeper_result
+                    );
+                }
+            } catch (Exception $gk_e) {
+                // Log error but continue - don't fail if GateKeeper update fails
+                if(isset($this->helpers['log'])) {
+                    $this->helpers['log']->warning(
+                        'Error setting domain status in GateKeeper - continuing anyway',
+                        ['domain' => $domain, 'error' => $gk_e->getMessage()],
+                        $gk_e->getMessage(),
+                        $gk_e->getTraceAsString()
+                    );
+                }
+            }
+            
             // Calculate total execution time
             $totalExecutionTime = microtime(true) - $startTime;
             
@@ -1161,6 +1197,45 @@ class Blackwall extends ProductModule
                     $this->helpers['log']->info(
                         'Domain status set to online in Botguard',
                         $result
+                    );
+                }
+            }
+            
+            // Step 2: Also update the domain status in GateKeeper
+            try {
+                // Get the A records for the domain
+                $domain_ips = $this->helpers['dns']->getDomainARecords($domain);
+                // Get AAAA records if available
+                $domain_ipv6s = $this->helpers['dns']->getDomainAAAARecords($domain);
+                
+                $gatekeeper_result = $this->helpers['api']->gatekeeperRequest(
+                    '/website/' . $domain, 
+                    'PUT', 
+                    [
+                        'status' => BlackwallConstants::STATUS_ONLINE,
+                        'ip' => $domain_ips,
+                        'ipv6' => $domain_ipv6s,
+                        'user_id' => $user_id
+                    ]
+                );
+                
+                if(isset($this->helpers['log'])) {
+                    $this->helpers['log']->info(
+                        'Domain status set to online in GateKeeper',
+                        $gatekeeper_result
+                    );
+                }
+                
+                // Register hook for DNS verification after unsuspension
+                $this->helpers['dns']->registerDnsCheckHook($domain, $this->order["id"], $this->order["owner_id"]);
+            } catch (Exception $gk_e) {
+                // Log error but continue - don't fail if GateKeeper update fails
+                if(isset($this->helpers['log'])) {
+                    $this->helpers['log']->warning(
+                        'Error setting domain status in GateKeeper - continuing anyway',
+                        ['domain' => $domain, 'error' => $gk_e->getMessage()],
+                        $gk_e->getMessage(),
+                        $gk_e->getTraceAsString()
                     );
                 }
             }
