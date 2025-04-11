@@ -6,9 +6,11 @@ class ApiHelper
 {
     private $api_key;
     private $module_name;
-    private $timeout = 20; // Default timeout in seconds
-    private $retries = 1; // Default number of retries
+    private $timeout = 8; // Reduced default timeout in seconds
+    private $connectTimeout = 5; // Connection timeout
+    private $retries = 0; // Default to no retries
     private $lastError = null;
+    private $apiFailure = false; // Track if any API call has failed
     
     /**
      * Constructor
@@ -18,16 +20,17 @@ class ApiHelper
      * @param int $timeout Timeout in seconds
      * @param int $retries Number of retries
      */
-    public function __construct($api_key, $module_name, $timeout = 20, $retries = 1)
+    public function __construct($api_key, $module_name, $timeout = 8, $retries = 0)
     {
         $this->api_key = $api_key;
         $this->module_name = $module_name;
-        $this->timeout = max(5, intval($timeout)); // Minimum 5 seconds
-        $this->retries = max(0, intval($retries)); // Minimum 0 retries
+        $this->timeout = max(3, intval($timeout)); // Minimum 3 seconds
+        $this->connectTimeout = min(5, intval($timeout)/2); // Connect timeout is half of total timeout
+        $this->retries = 0; // No retries to prevent hanging
     }
     
     /**
-     * Logging method (replacing previous static save_log())
+     * Logging method
      * 
      * @param string $level Log level
      * @param string $message Log message
@@ -35,6 +38,9 @@ class ApiHelper
      */
     private function log($level, $message, $context = [])
     {
+        // Add timestamp to all logs
+        $context['timestamp'] = date('Y-m-d H:i:s');
+        
         // Check if LogHelper exists, use it; otherwise fallback to error_log
         if (class_exists('LogHelper')) {
             switch ($level) {
@@ -76,7 +82,17 @@ class ApiHelper
     }
     
     /**
-     * Make a request to the Botguard API
+     * Check if there has been any API failure
+     * 
+     * @return bool True if any API call has failed
+     */
+    public function hasApiFailure()
+    {
+        return $this->apiFailure;
+    }
+    
+    /**
+     * Make a request to the Botguard API with timeout protection
      * 
      * @param string $endpoint API endpoint to call
      * @param string $method HTTP method to use
@@ -86,14 +102,30 @@ class ApiHelper
      */
     public function request($endpoint, $method = 'GET', $data = [], $override_api_key = null)
     {
+        // If API already failed in this session, don't try again
+        if ($this->apiFailure) {
+            $this->lastError = "Skipping API call due to previous failure";
+            $this->log('warning', 'Skipping API call due to previous failure', [
+                'endpoint' => $endpoint,
+                'method' => $method
+            ]);
+            
+            // Return a basic response to allow the process to continue
+            return ['status' => 'skip', 'message' => 'Operation skipped due to previous API failure'];
+        }
+        
         // Reset last error
         $this->lastError = null;
+        
+        // Start timing
+        $startTime = microtime(true);
         
         // Get API key from module config or use override if provided
         $api_key = $override_api_key ?: $this->api_key;
         
         if (empty($api_key)) {
             $this->lastError = "API key is required for Botguard API requests.";
+            $this->apiFailure = true;
             throw new Exception($this->lastError);
         }
         
@@ -101,214 +133,144 @@ class ApiHelper
         $url = 'https://apiv2.botguard.net' . $endpoint;
         
         // Log the API request
-        $this->log(
-            'info', 
-            'API Request: ' . $method . ' ' . $url,
-            [
-                'data' => $data,
-                'api_key_first_chars' => substr($api_key, 0, 5) . '...'
-            ]
-        );
+        $this->log('info', 'API Request: ' . $method . ' ' . $url, [
+            'data' => $data,
+            'api_key_first_chars' => substr($api_key, 0, 5) . '...'
+        ]);
         
-        // Implement retry logic
-        $attempts = 0;
-        $max_attempts = $this->retries + 1;
-        $last_error = null;
-        
-        while ($attempts < $max_attempts) {
-            $attempts++;
+        try {
+            // Initialize cURL
+            $ch = curl_init();
             
-            try {
-                // Initialize cURL
-                $ch = curl_init();
-                
-                // Setup common cURL options
-                curl_setopt($ch, CURLOPT_URL, $url);
-                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-                curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-                curl_setopt($ch, CURLOPT_TIMEOUT, $this->timeout);
-                curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $this->timeout / 2);
-                curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-                curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-                
-                // Set headers including Authorization
-                $headers = [
-                    'Authorization: Bearer ' . $api_key,
-                    'Content-Type: application/x-www-form-urlencoded',
-                    'Accept: application/json'
-                ];
-                curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-                
-                // Set up the request based on HTTP method
-                switch ($method) {
-                    case 'POST':
-                        curl_setopt($ch, CURLOPT_POST, true);
-                        if (!empty($data)) {
-                            curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
-                        }
-                        break;
-                    case 'PUT':
-                        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'PUT');
-                        if (!empty($data)) {
-                            curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
-                        }
-                        break;
-                    case 'DELETE':
-                        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'DELETE');
-                        break;
-                    default: // GET
-                        if (!empty($data)) {
-                            $url .= '?' . http_build_query($data);
-                            curl_setopt($ch, CURLOPT_URL, $url);
-                        }
-                        break;
-                }
+            // Setup common cURL options
+            curl_setopt($ch, CURLOPT_URL, $url);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, $this->timeout);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $this->connectTimeout);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+            
+            // Set headers including Authorization
+            $headers = [
+                'Authorization: Bearer ' . $api_key,
+                'Content-Type: application/x-www-form-urlencoded',
+                'Accept: application/json'
+            ];
+            curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+            
+            // Set up the request based on HTTP method
+            switch ($method) {
+                case 'POST':
+                    curl_setopt($ch, CURLOPT_POST, true);
+                    if (!empty($data)) {
+                        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
+                    }
+                    break;
+                case 'PUT':
+                    curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'PUT');
+                    if (!empty($data)) {
+                        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
+                    }
+                    break;
+                case 'DELETE':
+                    curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'DELETE');
+                    break;
+                default: // GET
+                    if (!empty($data)) {
+                        $url .= '?' . http_build_query($data);
+                        curl_setopt($ch, CURLOPT_URL, $url);
+                    }
+                    break;
+            }
 
-                // Execute the request
-                $response = curl_exec($ch);
-                $err = curl_error($ch);
-                $info = curl_getinfo($ch);
-                curl_close($ch);
+            // Execute the request
+            $response = curl_exec($ch);
+            $err = curl_error($ch);
+            $info = curl_getinfo($ch);
+            curl_close($ch);
+            
+            // Calculate execution time
+            $executionTime = microtime(true) - $startTime;
+            
+            // Log the response
+            $this->log('info', 'API Response: ' . $method . ' ' . $url, [
+                'status_code' => $info['http_code'],
+                'execution_time' => round($executionTime, 4) . 's',
+                'error' => $err
+            ]);
+            
+            // Handle errors
+            if ($err) {
+                $this->log('error', 'cURL Error for ' . $url, ['error' => $err]);
+                $this->lastError = 'cURL Error: ' . $err;
+                $this->apiFailure = true;
                 
-                // Log the response
-                $this->log(
-                    'info',
-                    'API Response: ' . $method . ' ' . $url,
-                    [
-                        'status_code' => $info['http_code'],
-                        'response' => $response,
-                        'error' => $err
-                    ]
-                );
-                
-                // Handle errors
-                if ($err) {
-                    $this->log(
-                        'error', 
-                        'cURL Error for ' . $url, 
-                        ['error' => $err]
-                    );
-                    
-                    $last_error = 'cURL Error: ' . $err;
-                    
-                    // Only retry on connection errors, not on application-level errors
-                    if (strpos($err, 'timed out') !== false || 
-                        strpos($err, 'connection') !== false || 
-                        strpos($err, 'resolve host') !== false) {
-                        
-                        if ($attempts < $max_attempts) {
-                            $this->log('warning', 'Retrying API request after error', [
-                                'attempt' => $attempts,
-                                'max_attempts' => $max_attempts,
-                                'error' => $err
-                            ]);
-                            
-                            // Wait before retry (exponential backoff)
-                            usleep(min(1000000, 100000 * pow(2, $attempts)));
-                            continue;
-                        }
-                    }
-                    
-                    $this->lastError = $last_error;
-                    throw new Exception($last_error);
-                }
-                
-                // Parse response
-                $response_data = json_decode($response, true);
-                
-                // Handle JSON parse errors
-                if (json_last_error() !== JSON_ERROR_NONE) {
-                    $this->log(
-                        'error', 
-                        'JSON Parse Error', 
-                        [
-                            'error' => json_last_error_msg(),
-                            'response' => $response
-                        ]
-                    );
-                    
-                    $last_error = 'JSON Parse Error: ' . json_last_error_msg();
-                    
-                    // Don't retry on JSON parse errors
-                    $this->lastError = $last_error;
-                    throw new Exception($last_error);
-                }
-                
-                // Handle error responses
-                if (isset($response_data['status']) && $response_data['status'] === 'error') {
-                    $this->log(
-                        'error', 
-                        'API Error', 
-                        ['message' => $response_data['message']]
-                    );
-                    
-                    $last_error = 'API Error: ' . $response_data['message'];
-                    
-                    $this->lastError = $last_error;
-                    throw new Exception($last_error);
-                }
-                
-                // Handle specific HTTP status codes
-                if ($info['http_code'] >= 400) {
-                    $this->log(
-                        'error', 
-                        'HTTP Error', 
-                        [
-                            'status_code' => $info['http_code'], 
-                            'response' => $response
-                        ]
-                    );
-                    
-                    $last_error = 'HTTP Error: ' . $info['http_code'] . ' - ' . $response;
-                    
-                    // Retry on certain HTTP errors
-                    if (in_array($info['http_code'], [429, 500, 502, 503, 504]) && $attempts < $max_attempts) {
-                        $this->log('warning', 'Retrying API request after HTTP error', [
-                            'attempt' => $attempts,
-                            'max_attempts' => $max_attempts,
-                            'status_code' => $info['http_code']
-                        ]);
-                        
-                        // Wait before retry (exponential backoff)
-                        usleep(min(1000000, 100000 * pow(2, $attempts)));
-                        continue;
-                    }
-                    
-                    $this->lastError = $last_error;
-                    throw new Exception($last_error);
-                }
-                
-                // Success - return the data
-                return $response_data;
-                
-            } catch (Exception $e) {
-                $last_error = $e->getMessage();
-                
-                // If this is the last attempt, re-throw the exception
-                if ($attempts >= $max_attempts) {
-                    $this->lastError = $last_error;
-                    throw $e;
-                }
-                
-                // Otherwise, log and continue
-                $this->log('warning', 'API request attempt failed, retrying', [
-                    'attempt' => $attempts,
-                    'max_attempts' => $max_attempts,
-                    'error' => $last_error
+                // Return a basic success response to prevent hanging
+                return ['status' => 'error', 'message' => 'API request failed, continuing with default values'];
+            }
+            
+            // Parse response
+            $response_data = json_decode($response, true);
+            
+            // Handle JSON parse errors
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                $this->log('error', 'JSON Parse Error', [
+                    'error' => json_last_error_msg(),
+                    'response' => $response
                 ]);
                 
-                // Wait before retry (exponential backoff)
-                usleep(min(1000000, 100000 * pow(2, $attempts)));
+                $this->lastError = 'JSON Parse Error: ' . json_last_error_msg();
+                
+                // Return a basic success response
+                return ['status' => 'error', 'message' => 'Response parsing failed, continuing with defaults'];
             }
+            
+            // Handle error responses
+            if (isset($response_data['status']) && $response_data['status'] === 'error') {
+                $this->log('error', 'API Error', ['message' => $response_data['message']]);
+                $this->lastError = 'API Error: ' . $response_data['message'];
+                
+                // Don't set api failure flag for application-level errors
+                
+                // Return the error response as-is
+                return $response_data;
+            }
+            
+            // Handle specific HTTP status codes
+            if ($info['http_code'] >= 400) {
+                $this->log('error', 'HTTP Error', [
+                    'status_code' => $info['http_code'], 
+                    'response' => $response
+                ]);
+                
+                $this->lastError = 'HTTP Error: ' . $info['http_code'];
+                $this->apiFailure = true;
+                
+                // Return a basic success response
+                return ['status' => 'error', 'message' => 'API request failed with HTTP ' . $info['http_code']];
+            }
+            
+            // Success - return the data
+            return $response_data;
+            
+        } catch (Exception $e) {
+            $this->lastError = $e->getMessage();
+            $this->apiFailure = true;
+            
+            $this->log('error', 'Exception in API request', [
+                'endpoint' => $endpoint,
+                'method' => $method,
+                'error' => $e->getMessage()
+            ]);
+            
+            // Return a basic success response
+            return ['status' => 'error', 'message' => 'API request failed with exception: ' . $e->getMessage()];
         }
-        
-        // If we get here, all attempts have failed
-        $this->lastError = $last_error ?? 'Unknown error';
-        throw new Exception($this->lastError);
     }
 
     /**
-     * Make a request to the GateKeeper API
+     * Make a request to the GateKeeper API with timeout protection
      * 
      * @param string $endpoint API endpoint to call
      * @param string $method HTTP method to use
@@ -318,14 +280,30 @@ class ApiHelper
      */
     public function gatekeeperRequest($endpoint, $method = 'GET', $data = [], $override_api_key = null)
     {
+        // If API already failed in this session, don't try again
+        if ($this->apiFailure) {
+            $this->lastError = "Skipping GateKeeper API call due to previous failure";
+            $this->log('warning', 'Skipping GateKeeper API call due to previous failure', [
+                'endpoint' => $endpoint,
+                'method' => $method
+            ]);
+            
+            // Return a basic response to allow the process to continue
+            return ['status' => 'skip', 'message' => 'Operation skipped due to previous API failure'];
+        }
+        
         // Reset last error
         $this->lastError = null;
+        
+        // Start timing
+        $startTime = microtime(true);
         
         // Get API key from module config or use override if provided
         $api_key = $override_api_key ?: $this->api_key;
         
         if (empty($api_key)) {
             $this->lastError = "API key is required for GateKeeper API requests.";
+            $this->apiFailure = true;
             throw new Exception($this->lastError);
         }
 
@@ -333,205 +311,142 @@ class ApiHelper
         $url = 'https://api.blackwall.klikonline.nl:8443/v1.0' . $endpoint;
         
         // Log the API request
-        $this->log(
-            'info', 
-            'GateKeeper API Request: ' . $method . ' ' . $url,
-            [
-                'data' => $data,
-                'api_key_first_chars' => substr($api_key, 0, 5) . '...'
-            ]
-        );
+        $this->log('info', 'GateKeeper API Request: ' . $method . ' ' . $url, [
+            'data' => $data,
+            'api_key_first_chars' => substr($api_key, 0, 5) . '...'
+        ]);
         
-        // Implement retry logic
-        $attempts = 0;
-        $max_attempts = $this->retries + 1;
-        $last_error = null;
-        
-        while ($attempts < $max_attempts) {
-            $attempts++;
+        try {
+            // Initialize cURL
+            $ch = curl_init();
             
-            try {
-                // Initialize cURL
-                $ch = curl_init();
+            // Setup common cURL options
+            curl_setopt($ch, CURLOPT_URL, $url);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, $this->timeout);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $this->connectTimeout);
+            
+            // SSL verification
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+            
+            // Set headers including Authorization but with the correct Content-Type
+            $headers = [
+                'Authorization: Bearer ' . $api_key,
+                'Content-Type: application/x-www-form-urlencoded', // Changed from application/json
+                'Accept: application/json'
+            ];
+            curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+            
+            // Set up the request based on HTTP method
+            switch ($method) {
+                case 'POST':
+                    curl_setopt($ch, CURLOPT_POST, true);
+                    if (!empty($data)) {
+                        // Convert JSON data to form-encoded data
+                        $form_data = http_build_query($data);
+                        curl_setopt($ch, CURLOPT_POSTFIELDS, $form_data);
+                    }
+                    break;
+                case 'PUT':
+                    curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'PUT');
+                    if (!empty($data)) {
+                        // Convert JSON data to form-encoded data
+                        $form_data = http_build_query($data);
+                        curl_setopt($ch, CURLOPT_POSTFIELDS, $form_data);
+                    }
+                    break;
+                case 'DELETE':
+                    curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'DELETE');
+                    break;
+                default: // GET
+                    if (!empty($data)) {
+                        $url .= '?' . http_build_query($data);
+                        curl_setopt($ch, CURLOPT_URL, $url);
+                    }
+                    break;
+            }
+            
+            // Execute the request
+            $response = curl_exec($ch);
+            $err = curl_error($ch);
+            $info = curl_getinfo($ch);
+            curl_close($ch);
+            
+            // Calculate execution time
+            $executionTime = microtime(true) - $startTime;
+            
+            // Log the response
+            $this->log('info', 'GateKeeper API Response: ' . $method . ' ' . $url, [
+                'status_code' => $info['http_code'],
+                'execution_time' => round($executionTime, 4) . 's',
+                'error' => $err
+            ]);
+            
+            // Handle errors
+            if ($err) {
+                $this->log('error', 'GateKeeper cURL Error', ['error' => $err]);
+                $this->lastError = 'cURL Error: ' . $err;
+                $this->apiFailure = true;
                 
-                // Setup common cURL options
-                curl_setopt($ch, CURLOPT_URL, $url);
-                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-                curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-                curl_setopt($ch, CURLOPT_TIMEOUT, $this->timeout);
-                curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $this->timeout / 2);
+                // Return a basic success response
+                return ['status' => 'error', 'message' => 'GateKeeper API request failed, continuing with defaults'];
+            }
+            
+            // Parse response if it's JSON
+            if (!empty($response)) {
+                $response_data = json_decode($response, true);
                 
-                // SSL verification
-                curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-                curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-                
-                // Set headers including Authorization
-                $headers = [
-                    'Authorization: Bearer ' . $api_key,
-                    'Content-Type: application/json',
-                    'Accept: application/json'
-                ];
-                curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-                
-                // Set up the request based on HTTP method
-                switch ($method) {
-                    case 'POST':
-                        curl_setopt($ch, CURLOPT_POST, true);
-                        if (!empty($data)) {
-                            $json_data = json_encode($data);
-                            curl_setopt($ch, CURLOPT_POSTFIELDS, $json_data);
-                        }
-                        break;
-                    case 'PUT':
-                        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'PUT');
-                        if (!empty($data)) {
-                            $json_data = json_encode($data);
-                            curl_setopt($ch, CURLOPT_POSTFIELDS, $json_data);
-                        }
-                        break;
-                    case 'DELETE':
-                        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'DELETE');
-                        break;
-                    default: // GET
-                        if (!empty($data)) {
-                            $url .= '?' . http_build_query($data);
-                            curl_setopt($ch, CURLOPT_URL, $url);
-                        }
-                        break;
+                // Handle JSON parse errors
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    // For non-JSON responses, return as-is
+                    return ['raw_response' => $response];
                 }
                 
-                // Execute the request
-                $response = curl_exec($ch);
-                $err = curl_error($ch);
-                $info = curl_getinfo($ch);
-                curl_close($ch);
-                
-                // Log the response
-                $this->log(
-                    'info',
-                    'GateKeeper API Response: ' . $method . ' ' . $url,
-                    [
-                        'status_code' => $info['http_code'],
-                        'response' => $response,
-                        'error' => $err
-                    ]
-                );
-                
-                // Handle errors
-                if ($err) {
-                    $this->log(
-                        'error', 
-                        'GateKeeper cURL Error', 
-                        ['error' => $err]
-                    );
+                // Handle error responses
+                if (isset($response_data['status']) && $response_data['status'] === 'error') {
+                    $this->log('error', 'GateKeeper API Error', ['message' => $response_data['message']]);
+                    $this->lastError = 'GateKeeper API Error: ' . $response_data['message'];
                     
-                    $last_error = 'cURL Error: ' . $err;
+                    // Don't set api failure flag for application-level errors
                     
-                    // Only retry on connection errors, not on application-level errors
-                    if (strpos($err, 'timed out') !== false || 
-                        strpos($err, 'connection') !== false || 
-                        strpos($err, 'resolve host') !== false) {
-                        
-                        if ($attempts < $max_attempts) {
-                            $this->log('warning', 'Retrying GateKeeper API request after error', [
-                                'attempt' => $attempts,
-                                'max_attempts' => $max_attempts,
-                                'error' => $err
-                            ]);
-                            
-                            // Wait before retry (exponential backoff)
-                            usleep(min(1000000, 100000 * pow(2, $attempts)));
-                            continue;
-                        }
-                    }
-                    
-                    $this->lastError = $last_error;
-                    throw new Exception($last_error);
-                }
-                
-                // Parse response if it's JSON
-                if (!empty($response)) {
-                    $response_data = json_decode($response, true);
-                    
-                    // Handle JSON parse errors
-                    if (json_last_error() !== JSON_ERROR_NONE) {
-                        // For non-JSON responses, return as-is
-                        return ['raw_response' => $response];
-                    }
-                    
-                    // Handle error responses
-                    if (isset($response_data['status']) && $response_data['status'] === 'error') {
-                        $this->log(
-                            'error', 
-                            'GateKeeper API Error', 
-                            ['message' => $response_data['message']]
-                        );
-                        
-                        $last_error = 'GateKeeper API Error: ' . $response_data['message'];
-                        
-                        $this->lastError = $last_error;
-                        throw new Exception($last_error);
-                    }
-                    
+                    // Return the error response as-is
                     return $response_data;
                 }
                 
-                // Handle specific HTTP status codes
-                if ($info['http_code'] >= 400) {
-                    $this->log(
-                        'error', 
-                        'GateKeeper HTTP Error', 
-                        [
-                            'status_code' => $info['http_code'], 
-                            'response' => $response
-                        ]
-                    );
-                    
-                    $last_error = 'HTTP Error: ' . $info['http_code'] . ' - ' . $response;
-                    
-                    // Retry on certain HTTP errors
-                    if (in_array($info['http_code'], [429, 500, 502, 503, 504]) && $attempts < $max_attempts) {
-                        $this->log('warning', 'Retrying GateKeeper API request after HTTP error', [
-                            'attempt' => $attempts,
-                            'max_attempts' => $max_attempts,
-                            'status_code' => $info['http_code']
-                        ]);
-                        
-                        // Wait before retry (exponential backoff)
-                        usleep(min(1000000, 100000 * pow(2, $attempts)));
-                        continue;
-                    }
-                    
-                    $this->lastError = $last_error;
-                    throw new Exception($last_error);
-                }
-                
-                // If we got here, return empty array for empty responses (like 204 No Content)
-                return [];
-                
-            } catch (Exception $e) {
-                $last_error = $e->getMessage();
-                
-                // If this is the last attempt, re-throw the exception
-                if ($attempts >= $max_attempts) {
-                    $this->lastError = $last_error;
-                    throw $e;
-                }
-                
-                // Otherwise, log and continue
-                $this->log('warning', 'GateKeeper API request attempt failed, retrying', [
-                    'attempt' => $attempts,
-                    'max_attempts' => $max_attempts,
-                    'error' => $last_error
+                return $response_data;
+            }
+            
+            // Handle specific HTTP status codes
+            if ($info['http_code'] >= 400) {
+                $this->log('error', 'GateKeeper HTTP Error', [
+                    'status_code' => $info['http_code'], 
+                    'response' => $response
                 ]);
                 
-                // Wait before retry (exponential backoff)
-                usleep(min(1000000, 100000 * pow(2, $attempts)));
+                $this->lastError = 'HTTP Error: ' . $info['http_code'];
+                $this->apiFailure = true;
+                
+                // Return a basic success response
+                return ['status' => 'error', 'message' => 'GateKeeper API request failed with HTTP ' . $info['http_code']];
             }
+            
+            // If we got here, return empty array for empty responses (like 204 No Content)
+            return [];
+            
+        } catch (Exception $e) {
+            $this->lastError = $e->getMessage();
+            $this->apiFailure = true;
+            
+            $this->log('error', 'Exception in GateKeeper API request', [
+                'endpoint' => $endpoint,
+                'method' => $method,
+                'error' => $e->getMessage()
+            ]);
+            
+            // Return a basic success response
+            return ['status' => 'error', 'message' => 'GateKeeper API request failed with exception: ' . $e->getMessage()];
         }
-        
-        // If we get here, all attempts have failed
-        $this->lastError = $last_error ?? 'Unknown error';
-        throw new Exception($this->lastError);
     }
 }
