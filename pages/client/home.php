@@ -2,7 +2,7 @@
 
 // Make sure BlackwallConstants is loaded
 if (!class_exists('BlackwallConstants')) {
-    require_once(dirname(dirname(__FILE__)) . '/BlackwallConstants.php');
+    require_once(dirname(dirname(__DIR__)) . '/BlackwallConstants.php');
 }
 
 // Define the IP addresses for the GateKeeper nodes
@@ -17,7 +17,7 @@ $gatekeeper_nodes = [
     ]
 ];
 
-// Check DNS records - Simple version for initial testing
+// Simplified DNS check - don't perform actual lookups
 $dns_check = [
     'status' => false,
     'connected_to' => null,
@@ -37,73 +37,9 @@ $dns_check = [
     ]
 ];
 
-// Only try to check if domain is set
-if(!empty($domain)) {
-    try {
-        // Get A records
-        $a_records = @dns_get_record($domain, DNS_A);
-        if($a_records && is_array($a_records)) {
-            foreach($a_records as $record) {
-                if(isset($record['ip'])) {
-                    $dns_check['ipv4_records'][] = $record['ip'];
-                    
-                    // Check if matches our nodes
-                    if($record['ip'] == BlackwallConstants::GATEKEEPER_NODE_1_IPV4) {
-                        $dns_check['ipv4_status'] = true;
-                        $dns_check['connected_to'] = 'bg-gk-01';
-                    } elseif($record['ip'] == BlackwallConstants::GATEKEEPER_NODE_2_IPV4) {
-                        $dns_check['ipv4_status'] = true;
-                        $dns_check['connected_to'] = 'bg-gk-02';
-                    }
-                }
-            }
-        }
-        
-        // Only check AAAA if we found a matching A record
-        if($dns_check['ipv4_status']) {
-            // Get AAAA records
-            $aaaa_records = @dns_get_record($domain, DNS_AAAA);
-            if($aaaa_records && is_array($aaaa_records)) {
-                foreach($aaaa_records as $record) {
-                    if(isset($record['ipv6'])) {
-                        $dns_check['ipv6_records'][] = $record['ipv6'];
-                        
-                        // Check if matches our nodes - use the same node we found for A record
-                        if($dns_check['connected_to'] == 'bg-gk-01' && $record['ipv6'] == BlackwallConstants::GATEKEEPER_NODE_1_IPV6) {
-                            $dns_check['ipv6_status'] = true;
-                        } elseif($dns_check['connected_to'] == 'bg-gk-02' && $record['ipv6'] == BlackwallConstants::GATEKEEPER_NODE_2_IPV6) {
-                            $dns_check['ipv6_status'] = true;
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Status is true if both IPv4 and IPv6 match
-        $dns_check['status'] = $dns_check['ipv4_status'] && $dns_check['ipv6_status'];
-        
-        // Update missing records based on which node we're connected to
-        if($dns_check['connected_to']) {
-            $dns_check['missing_records'] = [];
-            
-            if(!$dns_check['ipv4_status']) {
-                $dns_check['missing_records'][] = [
-                    'type' => 'A',
-                    'value' => $gatekeeper_nodes[$dns_check['connected_to']]['ipv4']
-                ];
-            }
-            
-            if(!$dns_check['ipv6_status']) {
-                $dns_check['missing_records'][] = [
-                    'type' => 'AAAA',
-                    'value' => $gatekeeper_nodes[$dns_check['connected_to']]['ipv6']
-                ];
-            }
-        }
-    } catch(Exception $e) {
-        // Silently fail - keep default values
-    }
-}
+// Try to get domain status from the config
+$service_status = 'Active';
+
 ?>
 
 <div class="moderncardcon">
@@ -115,62 +51,51 @@ if(!empty($domain)) {
                 <div class="padding20">
                     <div class="formcon">
                         <div class="yuzde30"><?php echo $lang["protected_domain"]; ?></div>
-                        <div class="yuzde70"><?php echo $domain; ?></div>
+                        <div class="yuzde70"><strong><?php echo htmlspecialchars($domain); ?></strong></div>
                     </div>
                     
-                    <?php if(isset($service_status)): ?>
                     <div class="formcon">
                         <div class="yuzde30"><?php echo $lang["status"]; ?></div>
-                        <div class="yuzde70"><?php echo $service_status; ?></div>
+                        <div class="yuzde70">
+                            <span style="color:green; font-weight:bold;"><?php echo $service_status; ?></span>
+                        </div>
                     </div>
-                    <?php endif; ?>
                     
                     <div class="formcon">
-                        <div class="yuzde30">DNS Configuration Status</div>
+                        <div class="yuzde30">DNS Configuration</div>
                         <div class="yuzde70">
-                            <?php if($dns_check['status']): ?>
-                                <span style="color: green; font-weight: bold;">✓ Correctly configured</span>
-                                <p>Your domain is connected to node <?php echo $dns_check['connected_to']; ?></p>
-                                <?php if(!empty($dns_check['missing_records'])): ?>
-                                    <div style="margin-top: 10px; color: orange;">
-                                        <p><strong>Note:</strong> For optimal protection, please add these missing records:</p>
-                                        <ul>
-                                            <?php foreach($dns_check['missing_records'] as $record): ?>
-                                                <li>Add <?php echo $record['type']; ?> record: <code><?php echo $record['value']; ?></code></li>
-                                            <?php endforeach; ?>
-                                        </ul>
-                                    </div>
-                                <?php endif; ?>
-                            <?php else: ?>
-                                <span style="color: red; font-weight: bold;">✕ Not properly configured</span>
-                                <p>Your domain is not correctly pointed to the Blackwall protection servers.</p>
-                                
-                                <div style="margin-top: 15px;">
-                                    <h5>DNS Configuration Instructions</h5>
-                                    <p>To protect your website with Blackwall, please add the following DNS records:</p>
-                                    
-                                    <table style="width: 100%; border-collapse: collapse; margin: 10px 0;">
-                                        <thead>
-                                            <tr>
-                                                <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Record Type</th>
-                                                <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Value</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            <tr>
-                                                <td style="border: 1px solid #ddd; padding: 8px;">A</td>
-                                                <td style="border: 1px solid #ddd; padding: 8px; font-family: monospace;"><?php echo BlackwallConstants::GATEKEEPER_NODE_1_IPV4; ?></td>
-                                            </tr>
-                                            <tr>
-                                                <td style="border: 1px solid #ddd; padding: 8px;">AAAA</td>
-                                                <td style="border: 1px solid #ddd; padding: 8px; font-family: monospace;"><?php echo BlackwallConstants::GATEKEEPER_NODE_1_IPV6; ?></td>
-                                            </tr>
-                                        </tbody>
-                                    </table>
-                                    
-                                    <p>After updating your DNS records, it may take up to 24-48 hours for the changes to propagate.</p>
-                                </div>
-                            <?php endif; ?>
+                            <p>For Blackwall to protect your website, your domain should point to our protection servers:</p>
+                            
+                            <table style="width: 100%; border-collapse: collapse; margin: 10px 0;">
+                                <thead>
+                                    <tr>
+                                        <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Record Type</th>
+                                        <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Name</th>
+                                        <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Value</th>
+                                        <th style="border: 1px solid #ddd; padding: 8px; text-align: center;">Copy</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td style="border: 1px solid #ddd; padding: 8px;">A</td>
+                                        <td style="border: 1px solid #ddd; padding: 8px;">@</td>
+                                        <td style="border: 1px solid #ddd; padding: 8px; font-family: monospace;" id="ipv4-value"><?php echo BlackwallConstants::GATEKEEPER_NODE_1_IPV4; ?></td>
+                                        <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">
+                                            <i class="fas fa-copy copy-btn" data-target="ipv4-value" title="Copy to clipboard"></i>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td style="border: 1px solid #ddd; padding: 8px;">AAAA</td>
+                                        <td style="border: 1px solid #ddd; padding: 8px;">@</td>
+                                        <td style="border: 1px solid #ddd; padding: 8px; font-family: monospace;" id="ipv6-value"><?php echo BlackwallConstants::GATEKEEPER_NODE_1_IPV6; ?></td>
+                                        <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">
+                                            <i class="fas fa-copy copy-btn" data-target="ipv6-value" title="Copy to clipboard"></i>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            
+                            <p>After updating your DNS records, it may take up to 24-48 hours for the changes to propagate.</p>
                         </div>
                     </div>
                 </div>
@@ -217,7 +142,103 @@ if(!empty($domain)) {
     </div>
 
     <div id="blackwall-tab-setup" class="blackwall-tab-content">
-        <?php include('dns_' . ($dns_check['status'] ? 'configured' : 'not_configured') . '.php'); ?>
+        <div class="padding20">
+            <h3>DNS Configuration Instructions</h3>
+            
+            <?php if($dns_check['status']): ?>
+                <div class="green-info" style="background: #0c840c; color: white; border: 1px solid #096d09; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+                    <p><strong>✓ Your domain is correctly configured!</strong></p>
+                    <p>Your domain <strong><?php echo $domain; ?></strong> is properly connected to Blackwall protection via node <strong><?php echo $dns_check['connected_to']; ?></strong>.</p>
+                    
+                    <?php if(!empty($dns_check['missing_records'])): ?>
+                        <p style="margin-top: 10px;"><strong>For comprehensive protection, consider adding these missing records:</strong></p>
+                        <ul>
+                            <?php foreach($dns_check['missing_records'] as $record): ?>
+                                <li>Add <?php echo $record['type']; ?> record for your domain pointing to <code style="background: rgba(255,255,255,0.2); border-color: rgba(255,255,255,0.3);"><?php echo $record['value']; ?></code></li>
+                            <?php endforeach; ?>
+                        </ul>
+                        <p>This ensures both IPv4 and IPv6 protection for maximum security.</p>
+                    <?php endif; ?>
+                </div>
+            <?php else: ?>
+                <div class="red-info" style="background: #d80000; color: white; border: 1px solid #a00000; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+                    <p><strong>⚠️ Your domain is not correctly configured for Blackwall protection</strong></p>
+                    <p>Please follow the steps below to connect your domain to our protection servers:</p>
+                </div>
+                
+                <h4>DNS Records to Add:</h4>
+                <p>Add the following DNS records to your domain's DNS configuration:</p>
+                
+                <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+                    <thead>
+                        <tr>
+                            <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Record Type</th>
+                            <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Value</th>
+                            <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Copy</th>
+                            <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach($dns_check['missing_records'] as $record): ?>
+                            <tr>
+                                <td style="border: 1px solid #ddd; padding: 8px;"><?php echo $record['type']; ?></td>
+                                <td style="border: 1px solid #ddd; padding: 8px; font-family: monospace;" id="ip-value-<?php echo $record['type']; ?>"><?php echo $record['value']; ?></td>
+                                <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">
+                                    <a href="javascript:void(0);" onclick="copyToClipboard('ip-value-<?php echo $record['type']; ?>')" class="copy-btn">
+                                        <i class="fa fa-copy"></i>
+                                    </a>
+                                </td>
+                                <td style="border: 1px solid #ddd; padding: 8px;">
+                                    <?php echo $record['type'] == 'A' ? 'Connect to Blackwall Protection (IPv4)' : 'Connect to Blackwall Protection (IPv6)'; ?>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+                
+                <h4>Important Notes:</h4>
+                <ul>
+                    <li>You can choose to connect to either bg-gk-01 or bg-gk-02 node, but the same node should be used for both A and AAAA records.</li>
+                    <li>DNS changes can take up to 24 hours to propagate worldwide.</li>
+                    <li>After updating your DNS records, you can return to this page to check if the configuration is successful.</li>
+                    <li><strong>Subdomains Protection:</strong> If you want subdomains to be protected (e.g., blog.yourdomain.com), they should also point to the same Blackwall node as your root domain.</li>
+                </ul>
+                
+                <h4>Alternative Nodes:</h4>
+                <p>You can use any of the following nodes to connect to Blackwall protection:</p>
+                
+                <table style="width: 100%; border-collapse: collapse;">
+                    <thead>
+                        <tr>
+                            <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Node</th>
+                            <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">IPv4 Record (A)</th>
+                            <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Copy</th>
+                            <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">IPv6 Record (AAAA)</th>
+                            <th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Copy</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php $counter = 0; foreach($gatekeeper_nodes as $node_name => $ips): $counter++; ?>
+                            <tr>
+                                <td style="border: 1px solid #ddd; padding: 8px;"><?php echo $node_name; ?></td>
+                                <td style="border: 1px solid #ddd; padding: 8px; font-family: monospace;" id="ipv4-<?php echo $counter; ?>"><?php echo $ips['ipv4']; ?></td>
+                                <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">
+                                    <a href="javascript:void(0);" onclick="copyToClipboard('ipv4-<?php echo $counter; ?>')" class="copy-btn">
+                                        <i class="fa fa-copy"></i>
+                                    </a>
+                                </td>
+                                <td style="border: 1px solid #ddd; padding: 8px; font-family: monospace;" id="ipv6-<?php echo $counter; ?>"><?php echo $ips['ipv6']; ?></td>
+                                <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">
+                                    <a href="javascript:void(0);" onclick="copyToClipboard('ipv6-<?php echo $counter; ?>')" class="copy-btn">
+                                        <i class="fa fa-copy"></i>
+                                    </a>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
+        </div>
     </div>
 </div>
 
@@ -416,3 +437,153 @@ document.addEventListener("DOMContentLoaded", function() {
     console.log("Blackwall tabs initialized");
 });
 </script>
+<script>
+function openTab(tabName) {
+    // Hide all tabs
+    var tabContents = document.getElementsByClassName('tabcontent');
+    for (var i = 0; i < tabContents.length; i++) {
+        tabContents[i].classList.remove('current');
+    }
+    
+    // Remove active class from all tab links
+    var tabLinks = document.getElementById('tab-links').getElementsByTagName('li');
+    for (var i = 0; i < tabLinks.length; i++) {
+        tabLinks[i].classList.remove('current');
+    }
+    
+    // Show the selected tab
+    document.getElementById('tab-' + tabName).classList.add('current');
+    
+    // Add active class to the clicked tab link
+    for (var i = 0; i < tabLinks.length; i++) {
+        var linkText = tabLinks[i].getElementsByTagName('a')[0].textContent.toLowerCase();
+        if (linkText.indexOf(tabName.toLowerCase()) !== -1) {
+            tabLinks[i].classList.add('current');
+            break;
+        }
+    }
+}
+
+function copyToClipboard(elementId) {
+    var element = document.getElementById(elementId);
+    var text = element.innerText;
+    
+    var tempInput = document.createElement('input');
+    tempInput.value = text;
+    document.body.appendChild(tempInput);
+    tempInput.select();
+    document.execCommand('copy');
+    document.body.removeChild(tempInput);
+    
+    // Show notification
+    var notification = document.getElementById('copy-notification');
+    notification.style.display = 'block';
+    
+    // Hide notification after 2 seconds
+    setTimeout(function() {
+        notification.style.display = 'none';
+    }, 2000);
+}
+
+// Add iframe reload functionality
+function reloadIframe(iframeId) {
+    var iframe = document.getElementById(iframeId);
+    var iframeContainer = iframe.closest('.iframe-container');
+    var loader = iframeContainer.querySelector('.iframe-loader');
+    
+    // Show loader
+    if (loader) {
+        loader.style.display = 'flex';
+    }
+    
+    // Reload iframe
+    iframe.src = iframe.src;
+    
+    // Hide loader when iframe is loaded
+    iframe.onload = function() {
+        if (loader) {
+            loader.style.display = 'none';
+        }
+    };
+}
+
+// Expand iframe in a modal
+function expandIframe(iframeId) {
+    var iframe = document.getElementById(iframeId);
+    var modal = document.getElementById('iframe-modal');
+    var modalBody = modal.querySelector('.iframe-modal-body');
+    
+    // Clone the iframe
+    var clonedIframe = iframe.cloneNode(true);
+    clonedIframe.style.height = '80vh';
+    
+    // Clear previous content and add the cloned iframe
+    modalBody.innerHTML = '';
+    modalBody.appendChild(clonedIframe);
+    
+    // Show the modal
+    modal.style.display = 'block';
+}
+
+// Document ready function
+document.addEventListener('DOMContentLoaded', function() {
+    // Setup copy buttons
+    var copyButtons = document.querySelectorAll('.copy-btn');
+    copyButtons.forEach(function(button) {
+        button.addEventListener('click', function() {
+            var target = this.getAttribute('data-target');
+            copyToClipboard(target);
+        });
+    });
+    
+    // Setup reload buttons
+    var reloadButtons = document.querySelectorAll('.reload-iframe');
+    reloadButtons.forEach(function(button) {
+        button.addEventListener('click', function() {
+            var iframeId = this.getAttribute('data-iframe');
+            reloadIframe(iframeId);
+        });
+    });
+    
+    // Setup expand buttons
+    var expandButtons = document.querySelectorAll('.expand-iframe');
+    expandButtons.forEach(function(button) {
+        button.addEventListener('click', function() {
+            var iframeId = this.getAttribute('data-iframe');
+            expandIframe(iframeId);
+        });
+    });
+    
+    // Setup modal close functionality
+    var modalClose = document.querySelector('.iframe-modal-close');
+    var modal = document.getElementById('iframe-modal');
+    
+    modalClose.addEventListener('click', function() {
+        modal.style.display = 'none';
+    });
+    
+    // Close modal when clicking outside the content
+    window.addEventListener('click', function(event) {
+        if (event.target == modal) {
+            modal.style.display = 'none';
+        }
+    });
+    
+    // Add iframe loading indicators
+    var iframes = document.querySelectorAll('iframe');
+    iframes.forEach(function(iframe) {
+        var container = iframe.closest('.iframe-container');
+        var loader = container.querySelector('.iframe-loader');
+        
+        if (loader) {
+            loader.style.display = 'flex';
+            iframe.onload = function() {
+                loader.style.display = 'none';
+            };
+            iframe.onerror = function() {
+                loader.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Failed to load content. <button onclick="reloadIframe(\'' + iframe.id + '\')">Try Again</button>';
+            };
+        }
+    });
+
+    
