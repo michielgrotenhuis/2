@@ -19,7 +19,7 @@ $gatekeeper_nodes = [
 
 // Simplified DNS check - don't perform actual lookups
 $dns_check = [
-    'status' => false,
+    'status' => false, // Change to true to simulate properly configured DNS
     'connected_to' => null,
     'ipv4_status' => false,
     'ipv6_status' => false,
@@ -61,6 +61,7 @@ $service_status = 'Active';
                         </div>
                     </div>
                     
+                    <?php if (!$dns_check['status']): // Only show DNS configuration if DNS is not properly configured ?>
                     <div class="formcon">
                         <div class="yuzde30">DNS Configuration</div>
                         <div class="yuzde70">
@@ -81,7 +82,9 @@ $service_status = 'Active';
                                         <td style="border: 1px solid #ddd; padding: 8px;">@</td>
                                         <td style="border: 1px solid #ddd; padding: 8px; font-family: monospace;" id="ipv4-value"><?php echo BlackwallConstants::GATEKEEPER_NODE_1_IPV4; ?></td>
                                         <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">
-                                            <i class="fas fa-copy copy-btn" data-target="ipv4-value" title="Copy to clipboard"></i>
+                                            <a href="javascript:void(0);" onclick="copyToClipboard('ipv4-value')" class="copy-btn">
+                                                <i class="fa fa-copy"></i>
+                                            </a>
                                         </td>
                                     </tr>
                                     <tr>
@@ -89,7 +92,9 @@ $service_status = 'Active';
                                         <td style="border: 1px solid #ddd; padding: 8px;">@</td>
                                         <td style="border: 1px solid #ddd; padding: 8px; font-family: monospace;" id="ipv6-value"><?php echo BlackwallConstants::GATEKEEPER_NODE_1_IPV6; ?></td>
                                         <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">
-                                            <i class="fas fa-copy copy-btn" data-target="ipv6-value" title="Copy to clipboard"></i>
+                                            <a href="javascript:void(0);" onclick="copyToClipboard('ipv6-value')" class="copy-btn">
+                                                <i class="fa fa-copy"></i>
+                                            </a>
                                         </td>
                                     </tr>
                                 </tbody>
@@ -98,6 +103,17 @@ $service_status = 'Active';
                             <p>After updating your DNS records, it may take up to 24-48 hours for the changes to propagate.</p>
                         </div>
                     </div>
+                    <?php else: // Show success message if DNS is properly configured ?>
+                    <div class="formcon">
+                        <div class="yuzde30">DNS Status</div>
+                        <div class="yuzde70">
+                            <div class="green-info" style="background: #0c840c; color: white; border: 1px solid #096d09; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+                                <p><strong>✓ Your domain is correctly configured!</strong></p>
+                                <p>Your domain <strong><?php echo htmlspecialchars($domain); ?></strong> is properly connected to Blackwall protection.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <?php endif; ?>
                 </div>
             </div>
         </div>
@@ -148,7 +164,7 @@ $service_status = 'Active';
             <?php if($dns_check['status']): ?>
                 <div class="green-info" style="background: #0c840c; color: white; border: 1px solid #096d09; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
                     <p><strong>✓ Your domain is correctly configured!</strong></p>
-                    <p>Your domain <strong><?php echo $domain; ?></strong> is properly connected to Blackwall protection via node <strong><?php echo $dns_check['connected_to']; ?></strong>.</p>
+                    <p>Your domain <strong><?php echo $domain; ?></strong> is properly connected to Blackwall protection via node <strong><?php echo $dns_check['connected_to'] ?? 'bg-gk-01'; ?></strong>.</p>
                     
                     <?php if(!empty($dns_check['missing_records'])): ?>
                         <p style="margin-top: 10px;"><strong>For comprehensive protection, consider adding these missing records:</strong></p>
@@ -437,153 +453,3 @@ document.addEventListener("DOMContentLoaded", function() {
     console.log("Blackwall tabs initialized");
 });
 </script>
-<script>
-function openTab(tabName) {
-    // Hide all tabs
-    var tabContents = document.getElementsByClassName('tabcontent');
-    for (var i = 0; i < tabContents.length; i++) {
-        tabContents[i].classList.remove('current');
-    }
-    
-    // Remove active class from all tab links
-    var tabLinks = document.getElementById('tab-links').getElementsByTagName('li');
-    for (var i = 0; i < tabLinks.length; i++) {
-        tabLinks[i].classList.remove('current');
-    }
-    
-    // Show the selected tab
-    document.getElementById('tab-' + tabName).classList.add('current');
-    
-    // Add active class to the clicked tab link
-    for (var i = 0; i < tabLinks.length; i++) {
-        var linkText = tabLinks[i].getElementsByTagName('a')[0].textContent.toLowerCase();
-        if (linkText.indexOf(tabName.toLowerCase()) !== -1) {
-            tabLinks[i].classList.add('current');
-            break;
-        }
-    }
-}
-
-function copyToClipboard(elementId) {
-    var element = document.getElementById(elementId);
-    var text = element.innerText;
-    
-    var tempInput = document.createElement('input');
-    tempInput.value = text;
-    document.body.appendChild(tempInput);
-    tempInput.select();
-    document.execCommand('copy');
-    document.body.removeChild(tempInput);
-    
-    // Show notification
-    var notification = document.getElementById('copy-notification');
-    notification.style.display = 'block';
-    
-    // Hide notification after 2 seconds
-    setTimeout(function() {
-        notification.style.display = 'none';
-    }, 2000);
-}
-
-// Add iframe reload functionality
-function reloadIframe(iframeId) {
-    var iframe = document.getElementById(iframeId);
-    var iframeContainer = iframe.closest('.iframe-container');
-    var loader = iframeContainer.querySelector('.iframe-loader');
-    
-    // Show loader
-    if (loader) {
-        loader.style.display = 'flex';
-    }
-    
-    // Reload iframe
-    iframe.src = iframe.src;
-    
-    // Hide loader when iframe is loaded
-    iframe.onload = function() {
-        if (loader) {
-            loader.style.display = 'none';
-        }
-    };
-}
-
-// Expand iframe in a modal
-function expandIframe(iframeId) {
-    var iframe = document.getElementById(iframeId);
-    var modal = document.getElementById('iframe-modal');
-    var modalBody = modal.querySelector('.iframe-modal-body');
-    
-    // Clone the iframe
-    var clonedIframe = iframe.cloneNode(true);
-    clonedIframe.style.height = '80vh';
-    
-    // Clear previous content and add the cloned iframe
-    modalBody.innerHTML = '';
-    modalBody.appendChild(clonedIframe);
-    
-    // Show the modal
-    modal.style.display = 'block';
-}
-
-// Document ready function
-document.addEventListener('DOMContentLoaded', function() {
-    // Setup copy buttons
-    var copyButtons = document.querySelectorAll('.copy-btn');
-    copyButtons.forEach(function(button) {
-        button.addEventListener('click', function() {
-            var target = this.getAttribute('data-target');
-            copyToClipboard(target);
-        });
-    });
-    
-    // Setup reload buttons
-    var reloadButtons = document.querySelectorAll('.reload-iframe');
-    reloadButtons.forEach(function(button) {
-        button.addEventListener('click', function() {
-            var iframeId = this.getAttribute('data-iframe');
-            reloadIframe(iframeId);
-        });
-    });
-    
-    // Setup expand buttons
-    var expandButtons = document.querySelectorAll('.expand-iframe');
-    expandButtons.forEach(function(button) {
-        button.addEventListener('click', function() {
-            var iframeId = this.getAttribute('data-iframe');
-            expandIframe(iframeId);
-        });
-    });
-    
-    // Setup modal close functionality
-    var modalClose = document.querySelector('.iframe-modal-close');
-    var modal = document.getElementById('iframe-modal');
-    
-    modalClose.addEventListener('click', function() {
-        modal.style.display = 'none';
-    });
-    
-    // Close modal when clicking outside the content
-    window.addEventListener('click', function(event) {
-        if (event.target == modal) {
-            modal.style.display = 'none';
-        }
-    });
-    
-    // Add iframe loading indicators
-    var iframes = document.querySelectorAll('iframe');
-    iframes.forEach(function(iframe) {
-        var container = iframe.closest('.iframe-container');
-        var loader = container.querySelector('.iframe-loader');
-        
-        if (loader) {
-            loader.style.display = 'flex';
-            iframe.onload = function() {
-                loader.style.display = 'none';
-            };
-            iframe.onerror = function() {
-                loader.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Failed to load content. <button onclick="reloadIframe(\'' + iframe.id + '\')">Try Again</button>';
-            };
-        }
-    });
-
-    
