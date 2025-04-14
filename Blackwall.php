@@ -15,6 +15,12 @@ class Blackwall extends ProductModule
     {
         $this->_name = __CLASS__;
         parent::__construct();
+        
+        // Register hooks
+        if (file_exists(__DIR__ . '/hooks/register_hooks.php')) {
+            include_once(__DIR__ . '/hooks/register_hooks.php');
+        }
+        
         $this->loadHelpers();
         $this->startTime = microtime(true);
     }
