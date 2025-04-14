@@ -182,7 +182,7 @@ class BlackwallDnsHook
             $is_dns_configured = $check_dns_configuration($domain, $required_records);
             
             // Wait for the specified time before sending ticket (6 hours by default)
-            $wait_time = 6; // hours
+            $wait_time = 0.016667; // hours
             $time_expired = $is_time_expired($params['id'], $wait_time);
             
             // Function to create a ticket
