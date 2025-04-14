@@ -124,4 +124,4 @@ Current Version: 1.1
 
 ## Disclaimer
 
-The Blackwall module is developed by Zencommerce India in partnership with BotGuard. Use at your own risk, and always maintain backups.
+The Blackwall module is developed by Zencommerce India in partnership with Blackwall, but is not the official module. Use at your own risk, and always maintain backups.
