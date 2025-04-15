@@ -159,7 +159,7 @@ class Blackwall extends ProductModule
             return false;
         }
     }
-    
+
     /**
      * Get asset URL
      * 
@@ -356,7 +356,7 @@ class Blackwall extends ProductModule
             return false;
         }
     }
-    
+
     /**
      * Client Area Display
      */
@@ -448,153 +448,7 @@ class Blackwall extends ProductModule
             'config' => $n_config,
         ];
     }
-    
-    /**
-     * Delete service
-     */
-    public function delete()
-    {
-        try {
-            $domain = isset($this->options["config"]["blackwall_domain"]) 
-                ? $this->options["config"]["blackwall_domain"] 
-                : false;
-            
-            $user_id = isset($this->options["config"]["blackwall_user_id"]) 
-                ? $this->options["config"]["blackwall_user_id"] 
-                : false;
 
-            if(!$domain) {
-                $this->error = $this->lang["error_missing_domain"];
-                return false;
-            }
-
-            // Step 1: Delete the domain from Botguard
-            if(isset($this->helpers['log'])) {
-                $this->helpers['log']->info(
-                    'Deleting domain from Botguard',
-                    ['domain' => $domain]
-                );
-            }
-            
-            $result = $this->helpers['api']->request('/website/' . $domain, 'DELETE');
-            
-            if(isset($this->helpers['log'])) {
-                $this->helpers['log']->info(
-                    'Domain deleted from Botguard',
-                    $result
-                );
-            }
-            
-            // Step 2: Also delete the domain from GateKeeper
-            try {
-                if(isset($this->helpers['log'])) {
-                    $this->helpers['log']->info(
-                        'Deleting domain from GateKeeper',
-                        ['domain' => $domain]
-                    );
-                }
-                
-                $gatekeeper_result = $this->helpers['api']->gatekeeperRequest('/website/' . $domain, 'DELETE');
-                
-                if(isset($this->helpers['log'])) {
-                    $this->helpers['log']->info(
-                        'Domain deleted from GateKeeper',
-                        $gatekeeper_result
-                    );
-                }
-            } catch (Exception $gk_e) {
-                // Log error but continue - don't fail if GateKeeper deletion fails
-                if(isset($this->helpers['log'])) {
-                    $this->helpers['log']->warning(
-                        'Error deleting domain from GateKeeper',
-                        ['domain' => $domain, 'error' => $gk_e->getMessage()],
-                        $gk_e->getMessage(),
-                        $gk_e->getTraceAsString()
-                    );
-                }
-            }
-            
-            return true;
-        } catch (Exception $e) {
-            if(isset($this->helpers['log'])) {
-                $this->helpers['log']->error(
-                    'Error in delete function',
-                    ['domain' => isset($domain) ? $domain : 'N/A', 'user_id' => isset($user_id) ? $user_id : 'N/A'],
-                    $e->getMessage(),
-                    $e->getTraceAsString()
-                );
-            }
-            $this->error = $e->getMessage();
-            return false;
-        }
-    }
-
-    /**
-     * Get localized DNS configuration message
-     * 
-     * @param string $lang Language code
-     * @param string $domain Domain name
-     * @param array $required_records Required DNS records
-     * @return string Localized message content
-     */
-    private function get_dns_configuration_message($lang, $domain, $required_records)
-    {
-        // Basic English template for all messages
-        $message = "# DNS Configuration Instructions for {$domain}\n\n";
-        $message .= "⚠️ **Important Notice:** Your domain **{$domain}** is not correctly configured for Blackwall protection.\n\n";
-        $message .= "For Blackwall to protect your website, you need to point your domain to our protection servers using the DNS settings below:\n\n";
-        
-        // A Records section
-        $message .= "## A Records\n\n";
-        $message .= "| Record Type | Name | Value |\n";
-        $message .= "|------------|------|-------|\n";
-        foreach ($required_records['A'] as $ip) {
-            $message .= "| A | @ | {$ip} |\n";
-        }
-        
-        // AAAA Records section
-        $message .= "\n## AAAA Records (IPv6)\n\n";
-        $message .= "| Record Type | Name | Value |\n";
-        $message .= "|------------|------|-------|\n";
-        foreach ($required_records['AAAA'] as $ipv6) {
-            $message .= "| AAAA | @ | {$ipv6} |\n";
-        }
-        
-        // Instructions for www subdomain
-        $message .= "\n## www Subdomain\n\n";
-        $message .= "If you want to use www.{$domain}, you should also add the same records for the www subdomain or create a CNAME record:\n\n";
-        $message .= "| Record Type | Name | Value |\n";
-        $message .= "|------------|------|-------|\n";
-        $message .= "| CNAME | www | {$domain} |\n";
-        
-        // DNS propagation note
-        $message .= "\n## DNS Propagation\n\n";
-        $message .= "After updating your DNS settings, it may take up to 24-48 hours for the changes to propagate globally. During this time, you may experience intermittent connectivity to your website.\n\n";
-        
-        // Support note
-        $message .= "## Need Help?\n\n";
-        $message .= "If you need assistance with these settings, please reply to this ticket. Our team will be happy to guide you through the process.\n\n";
-        $message .= "You can also check your current DNS configuration using online tools like [MXToolbox](https://mxtoolbox.com/DNSLookup.aspx) or [DNSChecker](https://dnschecker.org/).\n\n";
-        
-        // Localize the message based on language if needed
-        switch ($lang) {
-            case 'de':
-                // German translation would go here
-                break;
-            case 'fr':
-                // French translation would go here
-                break;
-            case 'es':
-                // Spanish translation would go here
-                break;
-            case 'nl':
-                // Dutch translation would go here
-                break;
-        }
-        
-        return $message;
-    }
-    
     /**
      * Create new Blackwall service
      * Optimized version to prevent hanging
@@ -719,7 +573,8 @@ class Blackwall extends ProductModule
                 $gatekeeper_user_data = [
                     'id' => $user_id,
                     'email' => $user_email,
-                    'name' => $user_first_name . ' ' . $user_last_name
+                    'name' => $user_first_name . ' ' . $user_last_name,
+                    'tag' => ['wisecp'] // Add tag
                 ];
                 
                 if(isset($this->helpers['log'])) {
@@ -751,8 +606,7 @@ class Blackwall extends ProductModule
                 }
             }
             
-            // Step 4: Skip real DNS lookup and use default IPs
-            // Get both node IPs to ensure at least one works
+            // Step 4: Get domain IPs - IMPORTANT FIX: Use the Blackwall node IPs directly
             $domain_ips = [
                 BlackwallConstants::GATEKEEPER_NODE_1_IPV4,
                 BlackwallConstants::GATEKEEPER_NODE_2_IPV4
@@ -764,7 +618,7 @@ class Blackwall extends ProductModule
             
             if(isset($this->helpers['log'])) {
                 $this->helpers['log']->info(
-                    'Using default IPs for GateKeeper',
+                    'Using Blackwall node IPs for GateKeeper',
                     ['ipv4' => $domain_ips, 'ipv6' => $domain_ipv6s]
                 );
             }
@@ -785,7 +639,7 @@ class Blackwall extends ProductModule
                 if(isset($this->helpers['log'])) {
                     $this->helpers['log']->info(
                         'Creating domain in GateKeeper',
-                        ['domain' => $user_domain]
+                        ['domain' => $user_domain, 'data' => $gatekeeper_website_data]
                     );
                 }
                 
@@ -836,7 +690,7 @@ class Blackwall extends ProductModule
                 }
             } catch (Exception $update_e) {
                 // Log the error but continue - non-critical operation
-                if(isset($this->helpers['log'])) {
+if(isset($this->helpers['log'])) {
                     $this->helpers['log']->warning(
                         'Error updating domain status in Botguard - continuing anyway',
                         ['domain' => $user_domain, 'error' => $update_e->getMessage()]
@@ -1079,10 +933,15 @@ class Blackwall extends ProductModule
             
             // Step 2: Also update the domain status in GateKeeper
             try {
-                // Get the A records for the domain
-                $domain_ips = $this->helpers['dns']->getDomainARecords($domain);
-                // Get AAAA records if available
-                $domain_ipv6s = $this->helpers['dns']->getDomainAAAARecords($domain);
+                // Use Blackwall node IPs directly for guaranteed consistency
+                $domain_ips = [
+                    BlackwallConstants::GATEKEEPER_NODE_1_IPV4,
+                    BlackwallConstants::GATEKEEPER_NODE_2_IPV4
+                ];
+                $domain_ipv6s = [
+                    BlackwallConstants::GATEKEEPER_NODE_1_IPV6,
+                    BlackwallConstants::GATEKEEPER_NODE_2_IPV6
+                ];
                 
                 $gatekeeper_result = $this->helpers['api']->gatekeeperRequest(
                     '/website/' . $domain, 
@@ -1149,7 +1008,7 @@ class Blackwall extends ProductModule
             return false;
         }
     }
-    
+
     /**
      * Unsuspend service
      * Optimized to prevent hanging
@@ -1209,10 +1068,15 @@ class Blackwall extends ProductModule
             
             // Step 2: Also update the domain status in GateKeeper
             try {
-                // Get the A records for the domain
-                $domain_ips = $this->helpers['dns']->getDomainARecords($domain);
-                // Get AAAA records if available
-                $domain_ipv6s = $this->helpers['dns']->getDomainAAAARecords($domain);
+                // Use Blackwall node IPs directly for guaranteed consistency
+                $domain_ips = [
+                    BlackwallConstants::GATEKEEPER_NODE_1_IPV4,
+                    BlackwallConstants::GATEKEEPER_NODE_2_IPV4
+                ];
+                $domain_ipv6s = [
+                    BlackwallConstants::GATEKEEPER_NODE_1_IPV6,
+                    BlackwallConstants::GATEKEEPER_NODE_2_IPV6
+                ];
                 
                 $gatekeeper_result = $this->helpers['api']->gatekeeperRequest(
                     '/website/' . $domain, 
