@@ -2,7 +2,7 @@
 /**
  * Register Hooks for Blackwall Module
  * This file registers all necessary hooks for the Blackwall module
- * Enhanced with additional debugging
+ * Enhanced with improved debugging and reliability
  */
 
 // Log that the hook file was included
@@ -39,183 +39,132 @@ if (file_exists($welcome_hook_file)) {
 if (class_exists('Hook')) {
     error_log("Hook class exists, registering hooks");
     
-    // Hook into order creation - when a new order is created
-    Hook::add("OrderCreated", 1, function($params = []) {
-        error_log("OrderCreated hook triggered with params: " . print_r($params, true));
-        
-        // Check if this is Blackwall product (ID 105)
-        if (isset($params['product_id']) && $params['product_id'] == 105) {
-            error_log("Blackwall OrderCreated hook triggered for order ID: " . $params['id']);
-            
-            // Call the DNS verification and ticket creation functionality
-            if (class_exists('BlackwallDnsHook')) {
-                error_log("Calling BlackwallDnsHook::handleOrderActivated()");
-                try {
-                    BlackwallDnsHook::handleOrderActivated($params);
-                    error_log("BlackwallDnsHook::handleOrderActivated() completed");
-                } catch (Exception $e) {
-                    error_log("ERROR in BlackwallDnsHook::handleOrderActivated(): " . $e->getMessage());
-                }
-            } else {
-                error_log("ERROR: BlackwallDnsHook class not found");
-            }
-            
-            // Call the welcome message ticket creation functionality
-            if (class_exists('BlackwallWelcomeHook')) {
-                error_log("Calling BlackwallWelcomeHook::handleOrderActivated()");
-                try {
-                    BlackwallWelcomeHook::handleOrderActivated($params);
-                    error_log("BlackwallWelcomeHook::handleOrderActivated() completed");
-                } catch (Exception $e) {
-                    error_log("ERROR in BlackwallWelcomeHook::handleOrderActivated(): " . $e->getMessage());
-                }
-            } else {
-                error_log("ERROR: BlackwallWelcomeHook class not found");
-            }
-        } else {
-            error_log("Skipping hook - not a Blackwall product. Product ID: " . 
-                (isset($params['product_id']) ? $params['product_id'] : 'NOT SET'));
-        }
-    });
+    // Hook into ALL possible events that might be triggered when an order is created or activated
+    $hooks = [
+        "OrderCreated" => "Order creation",
+        "OrderActivation" => "Order activation",
+        "ProductCreated" => "Product creation",
+        "ProductReady" => "Product ready",
+        "OrderDetails" => "Order details",
+        "OrderView" => "Order view",
+        "NewOrder" => "New order",
+        "OrderUpgradeFinished" => "Order upgrade",
+        "AfterProductModule" => "After product module"
+    ];
     
-    // Hook into order activation - when an order is activated
-    Hook::add("OrderActivation", 1, function($params = []) {
-        error_log("OrderActivation hook triggered with params: " . print_r($params, true));
-        
-        // Check if this is Blackwall product (ID 105)
-        if (isset($params['product_id']) && $params['product_id'] == 105) {
-            error_log("Blackwall OrderActivation hook triggered for order ID: " . $params['id']);
-            
-            // Call the DNS verification and ticket creation functionality
-            if (class_exists('BlackwallDnsHook')) {
-                error_log("Calling BlackwallDnsHook::handleOrderActivated() from OrderActivation");
-                try {
-                    BlackwallDnsHook::handleOrderActivated($params);
-                    error_log("BlackwallDnsHook::handleOrderActivated() completed from OrderActivation");
-                } catch (Exception $e) {
-                    error_log("ERROR in BlackwallDnsHook::handleOrderActivated() from OrderActivation: " . $e->getMessage());
-                }
-            } else {
-                error_log("ERROR: BlackwallDnsHook class not found in OrderActivation");
-            }
-            
-            // Call the welcome message ticket creation functionality
-            if (class_exists('BlackwallWelcomeHook')) {
-                error_log("Calling BlackwallWelcomeHook::handleOrderActivated() from OrderActivation");
-                try {
-                    BlackwallWelcomeHook::handleOrderActivated($params);
-                    error_log("BlackwallWelcomeHook::handleOrderActivated() completed from OrderActivation");
-                } catch (Exception $e) {
-                    error_log("ERROR in BlackwallWelcomeHook::handleOrderActivated() from OrderActivation: " . $e->getMessage());
-                }
-            } else {
-                error_log("ERROR: BlackwallWelcomeHook class not found in OrderActivation");
-            }
-        } else {
-            error_log("Skipping OrderActivation hook - not a Blackwall product. Product ID: " . 
-                (isset($params['product_id']) ? $params['product_id'] : 'NOT SET'));
-        }
-    });
-    
-    // Daily cron job to check DNS configurations for existing orders
-    Hook::add("DailyCronJobs", 1, function() {
-        error_log("Blackwall DailyCronJobs hook triggered");
-        
-        // Check if we have the Order class
-        if (class_exists('Order')) {
-            try {
-                // Get Blackwall orders from the last 7 days
-                $orders = Order::getOrders(['product_id' => 105, 'date_range' => '-7 days']);
+    foreach ($hooks as $hookName => $hookDescription) {
+        try {
+            Hook::add($hookName, 1, function($params = []) use ($hookName, $hookDescription) {
+                error_log("Blackwall {$hookName} hook triggered ({$hookDescription})");
                 
-                if ($orders && is_array($orders)) {
-                    error_log("Found " . count($orders) . " recent Blackwall orders for DNS check");
+                // Check if this is Blackwall product (ID 105)
+                if (isset($params['product_id']) && $params['product_id'] == 105) {
+                    error_log("Blackwall {$hookName} hook - processing for product ID 105");
                     
-                    foreach($orders as $order) {
-                        // Convert to the format expected by the handler
-                        $params = [
-                            'id' => $order['id'],
-                            'product_id' => $order['product_id'],
-                            'options' => $order['options'],
-                            'owner_id' => $order['owner_id']
-                        ];
-                        
-                        error_log("Processing DNS check for order ID: " . $order['id']);
-                        
-                        // Only run DNS checks - no need to send welcome messages for existing orders
-                        if (class_exists('BlackwallDnsHook')) {
-                            try {
-                                BlackwallDnsHook::handleOrderActivated($params);
-                                error_log("DNS check completed for order ID: " . $order['id']);
-                            } catch (Exception $e) {
-                                error_log("Error in DNS check for order ID " . $order['id'] . ": " . $e->getMessage());
+                    // Get the real order info if we only have the ID
+                    if (isset($params['id']) && (!isset($params['options']) || empty($params['options']))) {
+                        if (class_exists('Order')) {
+                            error_log("Fetching complete order data for ID: " . $params['id']);
+                            $order = Order::get($params['id']);
+                            if ($order && isset($order['options'])) {
+                                $params['options'] = $order['options'];
+                                $params['owner_id'] = $order['owner_id'];
+                                error_log("Successfully fetched order data");
                             }
-                        } else {
-                            error_log("ERROR: BlackwallDnsHook class not found for order ID: " . $order['id']);
                         }
                     }
                     
-                    error_log("Blackwall DailyCronJobs processed " . count($orders) . " orders");
+                    // Call both hooks
+                    try {
+                        if (class_exists('BlackwallDnsHook')) {
+                            error_log("Calling BlackwallDnsHook::handleOrderActivated from {$hookName}");
+                            BlackwallDnsHook::handleOrderActivated($params);
+                            error_log("DNS hook completed");
+                        }
+                    } catch (\Exception $e) {
+                        error_log("ERROR in DNS hook: " . $e->getMessage() . "\n" . $e->getTraceAsString());
+                    }
+                    
+                    try {
+                        if (class_exists('BlackwallWelcomeHook')) {
+                            error_log("Calling BlackwallWelcomeHook::handleOrderActivated from {$hookName}");
+                            BlackwallWelcomeHook::handleOrderActivated($params);
+                            error_log("Welcome hook completed");
+                        }
+                    } catch (\Exception $e) {
+                        error_log("ERROR in Welcome hook: " . $e->getMessage() . "\n" . $e->getTraceAsString());
+                    }
                 } else {
-                    error_log("No recent Blackwall orders found for DNS check");
+                    error_log("Skipping hook - not a Blackwall product. Product ID: " . (isset($params['product_id']) ? $params['product_id'] : 'NOT SET'));
                 }
-            } catch (Exception $e) {
-                error_log("Blackwall DailyCronJobs error: " . $e->getMessage());
-            }
-        } else {
-            error_log("ERROR: Order class not found in DailyCronJobs");
-        }
-    });
-    
-    // Hook for after service creation is complete
-    Hook::add("ProductCreated", 1, function($params = []) {
-        error_log("ProductCreated hook triggered with params: " . print_r($params, true));
-        
-        // Check if this is Blackwall product (ID 105)
-        if (isset($params['product_id']) && $params['product_id'] == 105) {
-            error_log("Blackwall ProductCreated hook triggered for order ID: " . 
-                (isset($params['id']) ? $params['id'] : 'NOT SET'));
+            });
             
-            // Send welcome message ticket
-            if (class_exists('BlackwallWelcomeHook')) {
-                error_log("Calling BlackwallWelcomeHook::handleOrderActivated() from ProductCreated");
+            error_log("Successfully registered {$hookName} hook");
+        } catch (\Exception $e) {
+            error_log("ERROR registering {$hookName} hook: " . $e->getMessage());
+        }
+    }
+    
+    // Daily cron job to check DNS configurations for existing orders
+    try {
+        Hook::add("DailyCronJobs", 1, function() {
+            error_log("Blackwall DailyCronJobs hook triggered");
+            
+            // Check if we have the Order class
+            if (class_exists('Order')) {
                 try {
-                    BlackwallWelcomeHook::handleOrderActivated($params);
-                    error_log("BlackwallWelcomeHook::handleOrderActivated() completed from ProductCreated");
-                } catch (Exception $e) {
-                    error_log("ERROR in BlackwallWelcomeHook::handleOrderActivated() from ProductCreated: " . $e->getMessage());
+                    // Get Blackwall orders from the last 30 days
+                    $orders = Order::getOrders(['product_id' => 105, 'date_range' => '-30 days']);
+                    
+                    if ($orders && is_array($orders)) {
+                        error_log("Found " . count($orders) . " recent Blackwall orders for DNS check");
+                        
+                        foreach($orders as $order) {
+                            // Convert to the format expected by the handler
+                            $params = [
+                                'id' => $order['id'],
+                                'product_id' => $order['product_id'],
+                                'options' => $order['options'],
+                                'owner_id' => $order['owner_id']
+                            ];
+                            
+                            error_log("Processing order ID: " . $order['id']);
+                            
+                            // Run DNS checks
+                            try {
+                                if (class_exists('BlackwallDnsHook')) {
+                                    BlackwallDnsHook::handleOrderActivated($params);
+                                    error_log("DNS check completed for order ID: " . $order['id']);
+                                }
+                            } catch (\Exception $e) {
+                                error_log("Error in DNS check for order ID " . $order['id'] . ": " . $e->getMessage());
+                            }
+                            
+                            // Also run welcome checks
+                            try {
+                                if (class_exists('BlackwallWelcomeHook')) {
+                                    BlackwallWelcomeHook::handleOrderActivated($params);
+                                    error_log("Welcome check completed for order ID: " . $order['id']);
+                                }
+                            } catch (\Exception $e) {
+                                error_log("Error in welcome check for order ID " . $order['id'] . ": " . $e->getMessage());
+                            }
+                        }
+                    } else {
+                        error_log("No recent Blackwall orders found for DNS check");
+                    }
+                } catch (\Exception $e) {
+                    error_log("Error processing orders in DailyCronJobs: " . $e->getMessage());
                 }
             } else {
-                error_log("ERROR: BlackwallWelcomeHook class not found in ProductCreated");
+                error_log("ERROR: Order class not found in DailyCronJobs");
             }
-        } else {
-            error_log("Skipping ProductCreated hook - not a Blackwall product. Product ID: " . 
-                (isset($params['product_id']) ? $params['product_id'] : 'NOT SET'));
-        }
-    });
-    
-    // Add additional hooks for troubleshooting
-    Hook::add("ProductReady", 1, function($params = []) {
-        error_log("ProductReady hook triggered with params: " . print_r($params, true));
+        });
         
-        // Check if this is Blackwall product (ID 105)
-        if (isset($params['product_id']) && $params['product_id'] == 105) {
-            error_log("Blackwall ProductReady hook triggered for order ID: " . 
-                (isset($params['id']) ? $params['id'] : 'NOT SET'));
-            
-            // Send welcome message ticket as an additional attempt
-            if (class_exists('BlackwallWelcomeHook')) {
-                error_log("Calling BlackwallWelcomeHook::handleOrderActivated() from ProductReady");
-                try {
-                    BlackwallWelcomeHook::handleOrderActivated($params);
-                    error_log("BlackwallWelcomeHook::handleOrderActivated() completed from ProductReady");
-                } catch (Exception $e) {
-                    error_log("ERROR in BlackwallWelcomeHook::handleOrderActivated() from ProductReady: " . $e->getMessage());
-                }
-            } else {
-                error_log("ERROR: BlackwallWelcomeHook class not found in ProductReady");
-            }
-        }
-    });
+        error_log("Successfully registered DailyCronJobs hook");
+    } catch (\Exception $e) {
+        error_log("ERROR registering DailyCronJobs hook: " . $e->getMessage());
+    }
 } else {
     error_log("ERROR: Hook class not found - cannot register Blackwall hooks");
 }
