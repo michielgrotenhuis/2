@@ -23,7 +23,7 @@ The Blackwall module is a comprehensive website protection solution for WISECP t
 ## Installation
 
 1. Download the latest release from the GitHub repository
-2. Extract the files to `/modules/Blackwall/` in your WISECP installation
+2. Extract the files to `coremio/modules/Product/Blackwall/` in your WISECP installation
 3. Log in to your WISECP admin panel
 4. Navigate to Module Management
 5. Find "Blackwall (BotGuard) Website Protection" and click Install
