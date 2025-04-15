@@ -1,7 +1,7 @@
 <?php
 /**
  * BlackwallWelcomeHook - Handles welcome message ticket creation for new Blackwall customers
- * Enhanced with additional debugging
+ * Enhanced with improved debugging and reliability
  */
 
 // Make sure BlackwallConstants is loaded
@@ -30,12 +30,15 @@ class BlackwallWelcomeHook
             return;
         }
         
+        // Dump entire params array for debugging
+        error_log("Full params array: " . print_r($params, true));
+        
         $log_paths = [
             '/tmp/blackwall_welcome_hook.log',
             __DIR__ . '/../logs/blackwall_welcome_hook.log'
         ];
         
-        // Log function
+        // Log function with timestamp
         $debug_log = function($message, $data = null) use ($log_paths) {
             $timestamp = date('Y-m-d H:i:s');
             $log_message = "[{$timestamp}] {$message}\n";
@@ -58,7 +61,7 @@ class BlackwallWelcomeHook
                     }
                     
                     @file_put_contents($log_path, $log_message, FILE_APPEND);
-                } catch (Exception $e) {
+                } catch (\Exception $e) {
                     // Log to PHP error log instead
                     error_log("Failed to write to log file: " . $e->getMessage());
                 }
@@ -69,9 +72,6 @@ class BlackwallWelcomeHook
         };
         
         $debug_log("Blackwall Welcome Hook triggered for order ID: " . $params['id']);
-        
-        // Dump entire params array for debugging
-        error_log("Full params array: " . print_r($params, true));
         
         // Get the domain name from order options
         $domain = isset($params['options']) && isset($params['options']['domain']) 
@@ -186,7 +186,11 @@ class BlackwallWelcomeHook
                     $ticket_id = 0;
                     $ticket_class_used = '';
                     
-                    if (class_exists('Models\\Tickets\\Tickets')) {
+                    if (class_exists('\\Models\\Tickets\\Tickets')) {
+                        error_log("Using \\Models\\Tickets\\Tickets class");
+                        $ticket_class_used = '\\Models\\Tickets\\Tickets';
+                        $ticket_id = \Models\Tickets\Tickets::insert($ticket_data);
+                    } elseif (class_exists('Models\\Tickets\\Tickets')) {
                         error_log("Using Models\\Tickets\\Tickets class");
                         $ticket_class_used = 'Models\\Tickets\\Tickets';
                         $ticket_id = \Models\Tickets\Tickets::insert($ticket_data);
@@ -195,8 +199,16 @@ class BlackwallWelcomeHook
                         $ticket_class_used = 'Tickets';
                         $ticket_id = Tickets::insert($ticket_data);
                     } else {
-                        error_log("ERROR: No Tickets class found");
-                        throw new Exception("Ticket system not found - neither Models\\Tickets\\Tickets nor Tickets class exists");
+                        error_log("ERROR: No Tickets class found. Looking for existing classes:");
+                        
+                        // Debug to find the Tickets class
+                        $declared_classes = get_declared_classes();
+                        $possible_ticket_classes = array_filter($declared_classes, function($class) {
+                            return stripos($class, 'ticket') !== false;
+                        });
+                        error_log("Possible ticket classes: " . print_r($possible_ticket_classes, true));
+                        
+                        throw new Exception("Ticket system not found - no appropriate Tickets class exists");
                     }
                     
                     error_log("Ticket creation result: " . ($ticket_id ? "Success (ID: $ticket_id)" : "Failed"));
@@ -259,7 +271,10 @@ class BlackwallWelcomeHook
         
         // Merge defaults with provided data
         $data = array_merge($defaults, $data);
-        $domain = parse_url($data['website_url'], PHP_URL_HOST) ?: 'your domain';
+        $domain = parse_url($data['website_url'], PHP_URL_HOST) ?: $data['website_url'];
+        if (strpos($domain, 'https://') === 0) {
+            $domain = str_replace('https://', '', $domain);
+        }
         
         // Define the required DNS records for Blackwall protection
         $required_records = [
