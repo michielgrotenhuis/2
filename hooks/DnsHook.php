@@ -1,6 +1,7 @@
 <?php
 /**
  * BlackwallDnsHook - Handles DNS verification hooks for Blackwall module
+ * Improved version with better logging and error handling
  */
 
 // Make sure BlackwallConstants is loaded
@@ -28,7 +29,7 @@ class BlackwallDnsHook
             __DIR__ . '/../logs/blackwall_dns_hook.log'
         ];
         
-        // Log function
+        // Log function with timestamp
         $debug_log = function($message, $data = null) use ($log_paths) {
             $timestamp = date('Y-m-d H:i:s');
             $log_message = "[{$timestamp}] {$message}\n";
@@ -51,7 +52,7 @@ class BlackwallDnsHook
                     }
                     
                     @file_put_contents($log_path, $log_message, FILE_APPEND);
-                } catch (Exception $e) {
+                } catch (\Exception $e) {
                     // Silently fail if we can't write to this location
                     error_log("Failed to write to log file: " . $e->getMessage());
                 }
@@ -62,6 +63,7 @@ class BlackwallDnsHook
         };
         
         $debug_log("Blackwall DNS Hook triggered for order ID: " . $params['id']);
+        $debug_log("Full params:", $params);
         
         // Get the domain name from order options
         $domain = isset($params['options']) && isset($params['options']['domain']) 
@@ -114,7 +116,7 @@ class BlackwallDnsHook
                     $result = $has_valid_a_record && $has_valid_aaaa_record;
                     $debug_log("DNS check result: " . ($result ? 'Correctly configured' : 'Not correctly configured'));
                     return $result;
-                } catch (Exception $e) {
+                } catch (\Exception $e) {
                     $debug_log("Exception in DNS check: " . $e->getMessage());
                     return false; // Default to false on error
                 }
@@ -181,8 +183,8 @@ class BlackwallDnsHook
             // Check if DNS is correctly configured
             $is_dns_configured = $check_dns_configuration($domain, $required_records);
             
-            // Wait for the specified time before sending ticket (6 hours by default)
-            $wait_time = 0.016667; // hours
+            // Wait for the specified time before sending ticket (6 hours)
+            $wait_time = 6; // 6 hours - DO NOT CHANGE THIS TO TESTING VALUE
             $time_expired = $is_time_expired($params['id'], $wait_time);
             
             // Function to create a ticket
@@ -221,7 +223,7 @@ class BlackwallDnsHook
                             $debug_log("Updated DNS check file with ticket information");
                         }
                     }
-                } catch (Exception $e) {
+                } catch (\Exception $e) {
                     $debug_log("Exception occurred when creating ticket: " . $e->getMessage());
                     $debug_log("Exception trace: " . $e->getTraceAsString());
                 }
