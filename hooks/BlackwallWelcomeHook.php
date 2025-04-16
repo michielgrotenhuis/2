@@ -335,13 +335,13 @@ class BlackwallWelcomeHook
             <span style="font-size: 12pt;">{user_company_name}</span>
         </p>
 
-        <p style="text-align: center; font-size: 16pt; color: #4CAF50;"><strong>🎉 Congratulations on securing your website with Blackwall! 🎉</strong></p>
+        <p style="text-align: center; font-size: 16pt; color: #4CAF50;"><strong>Congratulations on securing your website with Blackwall!</strong></p>
         <p style="text-align: center; font-size: 14pt;">Just <strong>3 simple steps</strong> to complete your setup:</p>
 
         <div style="background-color: #f9f9f9; border-left: 4px solid #8bc34a; padding: 15px; margin: 20px 0; border-radius: 5px;">
-            <p style="margin: 5px 0;"><strong>Step 1:</strong> ✅ Create Blackwall account (Completed!)</p>
-            <p style="margin: 5px 0;"><strong>Step 2:</strong> 🔄 Set up DNS records (Instructions below)</p>
-            <p style="margin: 5px 0;"><strong>Step 3:</strong> ⚙️ Configure your services</p>
+            <p style="margin: 5px 0;"><strong>Step 1:</strong> Create Blackwall account (Completed!)</p>
+            <p style="margin: 5px 0;"><strong>Step 2:</strong> Set up DNS records (Instructions below)</p>
+            <p style="margin: 5px 0;"><strong>Step 3:</strong> Configure your services</p>
         </div>
 
         <p><strong>What happens next?</strong></p>
@@ -433,13 +433,13 @@ HTML;
             <span style="font-size: 12pt;">{user_company_name}</span>
         </p>
 
-        <p style="text-align: center; font-size: 16pt; color: #4CAF50;"><strong>🎉 Gefeliciteerd met het beveiligen van je website met Blackwall! 🎉</strong></p>
+        <p style="text-align: center; font-size: 16pt; color: #4CAF50;"><strong> Gefeliciteerd met het beveiligen van je website met Blackwall! </strong></p>
         <p style="text-align: center; font-size: 14pt;">Slechts <strong>3 eenvoudige stappen</strong> om je installatie te voltooien:</p>
 
         <div style="background-color: #f9f9f9; border-left: 4px solid #8bc34a; padding: 15px; margin: 20px 0; border-radius: 5px;">
-            <p style="margin: 5px 0;"><strong>Stap 1:</strong> ✅ Blackwall-account aanmaken (Voltooid!)</p>
-            <p style="margin: 5px 0;"><strong>Stap 2:</strong> 🔄 DNS-records instellen (Instructies hieronder)</p>
-            <p style="margin: 5px 0;"><strong>Stap 3:</strong> ⚙️ Configureer je diensten</p>
+            <p style="margin: 5px 0;"><strong>Stap 1:</strong> Blackwall-account aanmaken (Voltooid!)</p>
+            <p style="margin: 5px 0;"><strong>Stap 2:</strong> DNS-records instellen (Instructies hieronder)</p>
+            <p style="margin: 5px 0;"><strong>Stap 3:</strong> Configureer je diensten</p>
         </div>
 
         <p><strong>Wat gebeurt er hierna?</strong></p>
