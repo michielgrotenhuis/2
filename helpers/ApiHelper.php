@@ -1,7 +1,7 @@
 <?php
 /**
  * ApiHelper - Manages all API communication for the Blackwall module
- * Improved version with better error handling and domain IP detection
+ * Improved version with upstream IP support and better error handling
  */
 class ApiHelper
 {
@@ -278,7 +278,7 @@ class ApiHelper
             // Return a basic success response
             return [
                 'status' => 'success',
-'message' => 'API request failed with exception: ' . $e->getMessage() . ', continuing with defaults',
+                'message' => 'API request failed with exception: ' . $e->getMessage() . ', continuing with defaults',
                 'id' => rand(10000, 99999),
                 'api_key' => 'dummy_api_key_' . md5(time())
             ];
@@ -286,7 +286,7 @@ class ApiHelper
     }
 
     /**
-     * Make a request to the GateKeeper API with timeout protection
+     * Make a request to the GateKeeper API with proper upstream configuration
      * 
      * @param string $endpoint API endpoint to call
      * @param string $method HTTP method to use
@@ -324,9 +324,14 @@ class ApiHelper
         // Build full API URL
         $url = 'https://api.blackwall.klikonline.nl:8443/v1.0' . $endpoint;
         
-        // Log the API request
+        // Log the API request - Don't log full upstream data to avoid cluttering logs
+        $logData = $data;
+        if (isset($logData['upstream'])) {
+            $logData['upstream'] = 'Present (not showing in logs)';
+        }
+        
         $this->log('info', 'GateKeeper API Request: ' . $method . ' ' . $url, [
-            'data' => $data,
+            'data' => $logData,
             'api_key_first_chars' => substr($api_key, 0, 5) . '...'
         ]);
         
