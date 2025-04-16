@@ -1168,4 +1168,4 @@ public function create_dns_configuration_ticket($domain, $client_id, $order_id)
 }
 
 // Hook loading outside the class definition
-include_once(__DIR__ . '/hook_loader.php');
+    include __DIR__.DS."hook_loader.php";
