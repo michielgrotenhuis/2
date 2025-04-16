@@ -16,11 +16,6 @@ class Blackwall extends ProductModule
         $this->_name = __CLASS__;
         parent::__construct();
         
-        // Register hooks
-        if (file_exists(__DIR__ . '/hooks/register_hooks.php')) {
-            include_once(__DIR__ . '/hooks/register_hooks.php');
-        }
-        
         $this->loadHelpers();
         $this->startTime = microtime(true);
     }
@@ -48,7 +43,6 @@ class Blackwall extends ProductModule
         // Reset timer for next operation
         $this->startTime = $endTime;
     }
-    
     /**
      * Admin Area Buttons
      */
@@ -169,7 +163,6 @@ class Blackwall extends ProductModule
     public function asset_url($path) {
         return '/modules/Blackwall/assets/' . $path;
     }
-    
     /**
      * Load helper classes
      */
@@ -272,90 +265,123 @@ class Blackwall extends ProductModule
 
         return true;
     }
-    
     /**
-     * Generate a support ticket for DNS configuration
-     * This is called by the hook when DNS is not configured correctly
-     * 
-     * @param string $domain Domain name
-     * @param int $client_id Client ID
-     * @param int $order_id Order ID
-     * @return bool Success status
-     */
-    public function create_dns_configuration_ticket($domain, $client_id, $order_id)
-    {
+ * Generate a support ticket for DNS configuration
+ * This is called by the hook when DNS is not configured correctly
+ * 
+ * @param string $domain Domain name
+ * @param int $client_id Client ID
+ * @param int $order_id Order ID
+ * @return bool Success status
+ */
+public function create_dns_configuration_ticket($domain, $client_id, $order_id)
+{
+    error_log("create_dns_configuration_ticket called for domain: {$domain}, client: {$client_id}, order: {$order_id}");
+    
+    try {
+        if(isset($this->helpers['log'])) {
+            $this->helpers['log']->info(
+                'Creating DNS Configuration Ticket',
+                ['domain' => $domain, 'client_id' => $client_id, 'order_id' => $order_id]
+            );
+        }
+        
+        // Define the required DNS records for Blackwall protection
+        $required_records = BlackwallConstants::getDnsRecords();
+        
+        // Get client language preference
+        $client = User::getData($client_id);
+        error_log("Client data: " . json_encode($client));
+        
+        $client_lang = isset($client['lang']) ? $client['lang'] : 'en';
+        error_log("Using client language: {$client_lang}");
+        
+        // Get localized title
+        $title_locale = [
+            'en' => "DNS Configuration Required for {$domain}",
+            'de' => "DNS-Konfiguration erforderlich für {$domain}",
+            'fr' => "Configuration DNS requise pour {$domain}",
+            'es' => "Configuración DNS requerida para {$domain}",
+            'nl' => "DNS-configuratie vereist voor {$domain}",
+        ];
+        
+        // Default to English if language not found
+        $title = isset($title_locale[$client_lang]) ? $title_locale[$client_lang] : $title_locale['en'];
+        
+        // Create the ticket message with Markdown formatting
+        $message = $this->get_dns_configuration_message($client_lang, $domain, $required_records);
+        
+        // Prepare ticket data
+        $ticket_data = [
+            'user_id' => $client_id,
+            'did' => 1, // Department ID - adjust as needed
+            'priority' => 2, // Medium priority
+            'status' => 'process', // In progress
+            'title' => $title,
+            'message' => $message,
+            'service' => $order_id // Order ID
+        ];
+        
+        error_log("About to create ticket with data: " . json_encode($ticket_data));
+        
+        // Create the ticket - try multiple approaches to accommodate different WISECP versions
+        $ticket_id = 0;
+        
         try {
-            if(isset($this->helpers['log'])) {
-                $this->helpers['log']->info(
-                    'Creating DNS Configuration Ticket',
-                    ['domain' => $domain, 'client_id' => $client_id, 'order_id' => $order_id]
-                );
-            }
-            
-            // Define the required DNS records for Blackwall protection
-            $required_records = BlackwallConstants::getDnsRecords();
-            
-            // Get client language preference
-            $client = User::getData($client_id);
-            $client_lang = isset($client['lang']) ? $client['lang'] : 'en';
-            
-            // Get localized title
-            $title_locale = [
-                'en' => "DNS Configuration Required for {$domain}",
-                'de' => "DNS-Konfiguration erforderlich für {$domain}",
-                'fr' => "Configuration DNS requise pour {$domain}",
-                'es' => "Configuración DNS requerida para {$domain}",
-                'nl' => "DNS-configuratie vereist voor {$domain}",
-            ];
-            
-            // Default to English if language not found
-            $title = isset($title_locale[$client_lang]) ? $title_locale[$client_lang] : $title_locale['en'];
-            
-            // Create the ticket message with Markdown formatting
-            $message = $this->get_dns_configuration_message($client_lang, $domain, $required_records);
-            
-            // Prepare ticket data
-            $ticket_data = [
-                'user_id' => $client_id,
-                'did' => 1, // Department ID - adjust as needed
-                'priority' => 2, // Medium priority
-                'status' => 'process', // In progress
-                'title' => $title,
-                'message' => $message,
-                'service' => $order_id // Order ID
-            ];
-            
-            // Create the ticket
             if (class_exists('Models\\Tickets\\Tickets')) {
+                error_log("Using Models\\Tickets\\Tickets class");
                 $ticket_id = \Models\Tickets\Tickets::insert($ticket_data);
             } elseif (class_exists('Tickets')) {
+                error_log("Using Tickets class");
                 $ticket_id = Tickets::insert($ticket_data);
             } else {
-                throw new Exception("Ticket system not found");
+                error_log("ERROR: Could not find ticket class. Attempting fallback method");
+                
+                // Try a more direct approach
+                if (function_exists('Tickets_create')) {
+                    error_log("Using Tickets_create function");
+                    $ticket_id = Tickets_create($ticket_data);
+                } else {
+                    throw new Exception("No ticket creation method available");
+                }
             }
-            
-            if(isset($this->helpers['log'])) {
-                $this->helpers['log']->info(
-                    'DNS Configuration Ticket Created',
-                    ['ticket_id' => $ticket_id]
-                );
-            }
-            
-            return true;
+        } catch (Exception $ticket_e) {
+            error_log("Error creating ticket: " . $ticket_e->getMessage());
+            error_log("Trace: " . $ticket_e->getTraceAsString());
+            throw $ticket_e; // Re-throw to be handled by outer try/catch
         }
-        catch (Exception $e) {
-            $this->error = $e->getMessage();
-            if(isset($this->helpers['log'])) {
-                $this->helpers['log']->error(
-                    __FUNCTION__,
-                    ['order' => $this->order],
-                    $e->getMessage(),
-                    $e->getTraceAsString()
-                );
-            }
-            return false;
+        
+        if ($ticket_id) {
+            error_log("Ticket created successfully with ID: {$ticket_id}");
+        } else {
+            error_log("Ticket creation failed - no ticket ID returned");
         }
+        
+        if(isset($this->helpers['log'])) {
+            $this->helpers['log']->info(
+                'DNS Configuration Ticket Created',
+                ['ticket_id' => $ticket_id]
+            );
+        }
+        
+        return (bool)$ticket_id;
     }
+    catch (Exception $e) {
+        $this->error = $e->getMessage();
+        error_log("Exception in create_dns_configuration_ticket: " . $e->getMessage());
+        error_log("Trace: " . $e->getTraceAsString());
+        
+        if(isset($this->helpers['log'])) {
+            $this->helpers['log']->error(
+                __FUNCTION__,
+                ['order' => $this->order],
+                $e->getMessage(),
+                $e->getTraceAsString()
+            );
+        }
+        return false;
+    }
+}
 
     /**
      * Client Area Display
@@ -400,7 +426,6 @@ class Blackwall extends ProductModule
         }
         return $buttons;
     }
-
     /**
      * Admin Area Service Fields
      */
@@ -448,7 +473,6 @@ class Blackwall extends ProductModule
             'config' => $n_config,
         ];
     }
-
     /**
      * Create new Blackwall service
      * Optimized version to prevent hanging
@@ -690,7 +714,7 @@ class Blackwall extends ProductModule
                 }
             } catch (Exception $update_e) {
                 // Log the error but continue - non-critical operation
-if(isset($this->helpers['log'])) {
+                if(isset($this->helpers['log'])) {
                     $this->helpers['log']->warning(
                         'Error updating domain status in Botguard - continuing anyway',
                         ['domain' => $user_domain, 'error' => $update_e->getMessage()]
@@ -766,7 +790,6 @@ if(isset($this->helpers['log'])) {
             return false;
         }
     }
-    
     /**
      * Renewal of service
      * Optimized to prevent hanging
@@ -873,7 +896,6 @@ if(isset($this->helpers['log'])) {
             return false;
         }
     }
-    
     /**
      * Suspend service
      * Optimized to prevent hanging
@@ -987,8 +1009,7 @@ if(isset($this->helpers['log'])) {
             }
             
             return true;
-        }
-        catch (Exception $e) {
+        } catch (Exception $e) {
             // Calculate total execution time
             $totalExecutionTime = microtime(true) - $startTime;
             
@@ -1008,7 +1029,6 @@ if(isset($this->helpers['log'])) {
             return false;
         }
     }
-
     /**
      * Unsuspend service
      * Optimized to prevent hanging
@@ -1146,3 +1166,6 @@ if(isset($this->helpers['log'])) {
         }
     }
 }
+
+// Hook loading outside the class definition
+include_once(__DIR__ . '/hook_loader.php');
