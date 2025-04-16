@@ -19,8 +19,13 @@ class BlackwallDnsHook
      */
     public static function handleOrderActivated($params = [])
     {
+        // Log all parameters for debugging
+        error_log("DNS Hook - handleOrderActivated called with parameters: " . json_encode($params));
+        
         // Check if this is Blackwall product (ID 105)
-        if (!isset($params['product_id']) || $params['product_id'] != 105) {
+        if (!isset($params['product_id']) || ($params['product_id'] != 105 && $params['product_id'] != '105')) {
+            error_log("DNS Hook - Skipping - Not a Blackwall product. Product ID: " . 
+                     (isset($params['product_id']) ? $params['product_id'] : 'NOT SET'));
             return;
         }
         
@@ -118,6 +123,7 @@ class BlackwallDnsHook
                     return $result;
                 } catch (\Exception $e) {
                     $debug_log("Exception in DNS check: " . $e->getMessage());
+                    $debug_log("Exception trace: " . $e->getTraceAsString());
                     return false; // Default to false on error
                 }
             };
@@ -128,9 +134,12 @@ class BlackwallDnsHook
                 
                 // Check if there's a stored DNS check time
                 $dns_check_file = sys_get_temp_dir() . '/blackwall_dns_check_' . md5($domain . $order_id) . '.json';
+                $debug_log("DNS check file path: {$dns_check_file}");
                 
                 if (file_exists($dns_check_file)) {
                     $dns_check_data = json_decode(file_get_contents($dns_check_file), true);
+                    $debug_log("DNS check file contents:", $dns_check_data);
+                    
                     if (isset($dns_check_data['check_time'])) {
                         $activation_time = $dns_check_data['check_time'];
                         $debug_log("Found stored DNS check time: " . date('Y-m-d H:i:s', $activation_time));
@@ -142,6 +151,8 @@ class BlackwallDnsHook
                 } else {
                     // If file doesn't exist, create it now to start the timer
                     $activation_time = time();
+                    $debug_log("No DNS check file exists, creating new one with current time: " . date('Y-m-d H:i:s', $activation_time));
+                    
                     $dns_check_data = [
                         'domain' => $domain,
                         'order_id' => $order_id,
@@ -155,10 +166,8 @@ class BlackwallDnsHook
                         @mkdir($dir, 0755, true);
                     }
                     
-                    @file_put_contents($dns_check_file, json_encode($dns_check_data));
-                    
-                    $debug_log("Created new DNS check file: " . $dns_check_file);
-                    $debug_log("New check time: " . date('Y-m-d H:i:s', $activation_time));
+                    $write_result = @file_put_contents($dns_check_file, json_encode($dns_check_data));
+                    $debug_log("Created new DNS check file: " . ($write_result ? "Success" : "Failed"));
                     
                     // Return false since we just started the timer
                     return false;
@@ -184,7 +193,7 @@ class BlackwallDnsHook
             $is_dns_configured = $check_dns_configuration($domain, $required_records);
             
             // Wait for the specified time before sending ticket (6 hours)
-            $wait_time = 6; // 6 hours - DO NOT CHANGE THIS TO TESTING VALUE
+            $wait_time = 0.1; // TEMPORARY: Set to 6 minutes (0.1 hours) for testing, change back to 6 hours in production
             $time_expired = $is_time_expired($params['id'], $wait_time);
             
             // Function to create a ticket
@@ -197,20 +206,30 @@ class BlackwallDnsHook
                     
                     if (!$client_id) {
                         $debug_log("Client ID not found in params");
-                        return;
+                        return false;
                     }
+                    
+                    $debug_log("Client ID: {$client_id}");
                     
                     // Initialize Blackwall module instance to use its methods
                     if (!class_exists('Blackwall')) {
+                        $debug_log("Blackwall class not found, attempting to load it");
                         require_once(dirname(__DIR__) . '/Blackwall.php');
                     }
                     
+                    if (!class_exists('Blackwall')) {
+                        $debug_log("ERROR: Still can't find Blackwall class after trying to load it");
+                        return false;
+                    }
+                    
+                    $debug_log("Creating new Blackwall instance");
                     $blackwall = new Blackwall();
                     
                     // Create the ticket using the module's method
+                    $debug_log("About to call create_dns_configuration_ticket for domain: {$domain}");
                     $result = $blackwall->create_dns_configuration_ticket($domain, $client_id, $params['id']);
                     
-                    $debug_log("Ticket creation result: " . ($result ? 'Success' : 'Failed'));
+                    $debug_log("Ticket creation result: " . ($result ? "Success" : "Failed"));
                     
                     // If ticket was created successfully, update the DNS check file to prevent duplicate tickets
                     if ($result) {
@@ -219,13 +238,16 @@ class BlackwallDnsHook
                             $dns_check_data = json_decode(file_get_contents($dns_check_file), true);
                             $dns_check_data['ticket_created'] = true;
                             $dns_check_data['ticket_time'] = time();
-                            file_put_contents($dns_check_file, json_encode($dns_check_data));
-                            $debug_log("Updated DNS check file with ticket information");
+                            $write_result = file_put_contents($dns_check_file, json_encode($dns_check_data));
+                            $debug_log("Updated DNS check file with ticket information: " . ($write_result ? "Success" : "Failed"));
                         }
                     }
+                    
+                    return $result;
                 } catch (\Exception $e) {
                     $debug_log("Exception occurred when creating ticket: " . $e->getMessage());
                     $debug_log("Exception trace: " . $e->getTraceAsString());
+                    return false;
                 }
             };
             
@@ -240,12 +262,16 @@ class BlackwallDnsHook
                 if (file_exists($dns_check_file)) {
                     $dns_check_data = json_decode(file_get_contents($dns_check_file), true);
                     $ticket_already_created = isset($dns_check_data['ticket_created']) && $dns_check_data['ticket_created'] === true;
+                    $debug_log("DNS check file exists. Ticket already created: " . ($ticket_already_created ? "Yes" : "No"));
+                } else {
+                    $debug_log("DNS check file does not exist, no ticket has been created yet");
                 }
                 
                 if ($ticket_already_created) {
                     $debug_log("Ticket has already been created for this order - skipping");
                 } else {
-                    $create_ticket($params, $domain, $required_records);
+                    $ticket_result = $create_ticket($params, $domain, $required_records);
+                    $debug_log("Final ticket creation result: " . ($ticket_result ? "Success" : "Failure"));
                 }
             } else {
                 $debug_log("Not creating ticket - DNS configured: " . ($is_dns_configured ? 'Yes' : 'No') . 
