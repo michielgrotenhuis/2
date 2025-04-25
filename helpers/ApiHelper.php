@@ -321,7 +321,7 @@ class ApiHelper
             ];
         }
 
-        // Build full API URL
+        // Build full API URL - ENSURE CORRECT PORT NUMBER
         $url = 'https://api.blackwall.klikonline.nl:8443/v1.0' . $endpoint;
         
         // Log the API request - Don't log full upstream data to avoid cluttering logs
@@ -346,14 +346,18 @@ class ApiHelper
             curl_setopt($ch, CURLOPT_TIMEOUT, $this->timeout);
             curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $this->connectTimeout);
             
-            // SSL verification
+            // IMPORTANT: Disable SSL verification ONLY FOR TESTING - REMOVE IN PRODUCTION
+            // curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+            // curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            
+            // Production-ready SSL verification
             curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
             curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
             
-            // Set headers including Authorization
+            // Set headers including Authorization - ENSURE CORRECT CONTENT TYPE
             $headers = [
                 'Authorization: Bearer ' . $api_key,
-                'Content-Type: application/json', // Important: GateKeeper uses JSON, not form-encoded
+                'Content-Type: application/json', // CRITICAL: GateKeeper requires JSON, not form-encoded
                 'Accept: application/json'
             ];
             curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
@@ -363,17 +367,27 @@ class ApiHelper
                 case 'POST':
                     curl_setopt($ch, CURLOPT_POST, true);
                     if (!empty($data)) {
-                        // IMPORTANT: Send as JSON for GateKeeper API
+                        // CRITICAL: Send as JSON for GateKeeper API
                         $json_data = json_encode($data);
                         curl_setopt($ch, CURLOPT_POSTFIELDS, $json_data);
+                        
+                        // Log the actual JSON being sent for debugging
+                        $this->log('debug', 'GateKeeper POST Data (JSON)', [
+                            'json' => $json_data
+                        ]);
                     }
                     break;
                 case 'PUT':
                     curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'PUT');
                     if (!empty($data)) {
-                        // IMPORTANT: Send as JSON for GateKeeper API
+                        // CRITICAL: Send as JSON for GateKeeper API
                         $json_data = json_encode($data);
                         curl_setopt($ch, CURLOPT_POSTFIELDS, $json_data);
+                        
+                        // Log the actual JSON being sent for debugging
+                        $this->log('debug', 'GateKeeper PUT Data (JSON)', [
+                            'json' => $json_data
+                        ]);
                     }
                     break;
                 case 'DELETE':
@@ -391,6 +405,16 @@ class ApiHelper
             $response = curl_exec($ch);
             $err = curl_error($ch);
             $info = curl_getinfo($ch);
+            
+            // Check if we can output verbose information for debugging
+            if ($err) {
+                $this->log('error', 'GateKeeper cURL Error', [
+                    'error' => $err,
+                    'info' => $info,
+                    'url' => $url
+                ]);
+            }
+            
             curl_close($ch);
             
             // Calculate execution time
@@ -400,18 +424,18 @@ class ApiHelper
             $this->log('info', 'GateKeeper API Response: ' . $method . ' ' . $url, [
                 'status_code' => $info['http_code'],
                 'execution_time' => round($executionTime, 4) . 's',
-                'error' => $err
+                'error' => $err,
+                'response' => substr($response, 0, 200) . (strlen($response) > 200 ? '...' : '') // Log first 200 chars
             ]);
             
             // Handle errors
             if ($err) {
-                $this->log('error', 'GateKeeper cURL Error', ['error' => $err]);
                 $this->lastError = 'cURL Error: ' . $err;
                 
                 // Return a basic success response - don't fail on GateKeeper errors
                 return [
                     'status' => 'success',
-                    'message' => 'GateKeeper API request failed, continuing with defaults'
+                    'message' => 'GateKeeper API request failed with error: ' . $err . ', continuing with defaults'
                 ];
             }
             
@@ -421,19 +445,34 @@ class ApiHelper
                 
                 // Handle JSON parse errors
                 if (json_last_error() !== JSON_ERROR_NONE) {
+                    // Log the raw response for debugging
+                    $this->log('error', 'GateKeeper JSON Parse Error', [
+                        'error' => json_last_error_msg(),
+                        'response' => $response
+                    ]);
+                    
                     // For non-JSON responses, return as-is
-                    return ['raw_response' => $response];
+                    return [
+                        'status' => 'success',
+                        'message' => 'Received non-JSON response from GateKeeper, continuing',
+                        'raw_response' => $response
+                    ];
                 }
                 
                 // Handle error responses
                 if (isset($response_data['status']) && $response_data['status'] === 'error') {
-                    $this->log('error', 'GateKeeper API Error', ['message' => $response_data['message']]);
-                    $this->lastError = 'GateKeeper API Error: ' . $response_data['message'];
+                    $this->log('error', 'GateKeeper API Error', [
+                        'message' => $response_data['message'] ?? 'Unknown error',
+                        'data' => $response_data
+                    ]);
+                    
+                    $this->lastError = 'GateKeeper API Error: ' . ($response_data['message'] ?? 'Unknown error');
                     
                     // Don't fail on GateKeeper errors - return success
                     return [
                         'status' => 'success',
-                        'message' => 'Operation completed with GateKeeper message: ' . $response_data['message']
+'message' => 'Operation completed with GateKeeper message: ' . 
+                                ($response_data['message'] ?? 'Unknown error')
                     ];
                 }
                 
@@ -468,7 +507,8 @@ class ApiHelper
             $this->log('error', 'Exception in GateKeeper API request', [
                 'endpoint' => $endpoint,
                 'method' => $method,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
             
             // Return a basic success response
