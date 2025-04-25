@@ -23,7 +23,7 @@ class BlackwallDnsHook
         error_log("DNS Hook - handleOrderActivated called with parameters: " . json_encode($params));
         
         // Check if this is Blackwall product (ID 105)
-        if (!isset($params['product_id']) || ($params['product_id'] != 105 && $params['product_id'] != '105')) {
+        if (!isset($params['product_id']) || ($params['product_id'] != 240 && $params['product_id'] != '240')) {
             error_log("DNS Hook - Skipping - Not a Blackwall product. Product ID: " . 
                      (isset($params['product_id']) ? $params['product_id'] : 'NOT SET'));
             return;
