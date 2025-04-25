@@ -71,6 +71,12 @@ class Blackwall extends ProductModule
                 'text'  => $this->lang["check_dns"],
                 'type'  => 'transaction',
             ];
+            
+            // Add debug button for administrators
+            $buttons['debug_gatekeeper'] = [
+                'text'  => 'Debug GateKeeper',
+                'type'  => 'transaction',
+            ];
         }
 
         return $buttons;
@@ -154,6 +160,118 @@ class Blackwall extends ProductModule
         }
     }
 
+    /**
+     * Debug GateKeeper integration
+     * This admin function can be called to test the GateKeeper connection
+     * 
+     * @return bool Success status
+     */
+    public function use_adminArea_debug_gatekeeper()
+    {
+        // Get domain from service
+        $domain = isset($this->options["config"]["blackwall_domain"]) 
+            ? $this->options["config"]["blackwall_domain"] 
+            : false;
+        
+        $user_id = isset($this->options["config"]["blackwall_user_id"]) 
+            ? $this->options["config"]["blackwall_user_id"] 
+            : 10000; // Fallback ID
+        
+        // Get origin IPs
+        $origin_ipv4 = isset($this->options["config"]["origin_ipv4"]) 
+            ? json_decode($this->options["config"]["origin_ipv4"], true) 
+            : ['127.0.0.1'];
+                
+        $origin_ipv6 = isset($this->options["config"]["origin_ipv6"]) 
+            ? json_decode($this->options["config"]["origin_ipv6"], true) 
+            : ['::1'];
+
+        if(!$domain) {
+            echo Utility::jencode([
+                'status' => "error",
+                'message' => $this->lang["error_missing_domain"],
+            ]);
+            return false;
+        }
+
+        try {
+            // Log debug info
+            if(isset($this->helpers['log'])) {
+                $this->helpers['log']->info(
+                    'Testing GateKeeper connection',
+                    [
+                        'domain' => $domain, 
+                        'user_id' => $user_id,
+                        'origin_ipv4' => $origin_ipv4,
+                        'origin_ipv6' => $origin_ipv6,
+                        'api_key' => substr($this->config["settings"]["api_key"], 0, 5) . '...'
+                    ]
+                );
+            }
+
+            // Try to get domain info from GateKeeper
+            if(isset($this->helpers['api'])) {
+                $result = $this->helpers['api']->gatekeeperRequest('/website/' . $domain, 'GET');
+                
+                if(isset($result['status']) && $result['status'] === 'error') {
+                    // Domain doesn't exist yet in GateKeeper, create it
+                    $this->helpers['log']->info(
+                        'Domain not found in GateKeeper, creating it',
+                        ['domain' => $domain]
+                    );
+                    
+                    // Create domain in GateKeeper with proper origin IPs
+                    $gatekeeper_data = [
+                        'domain' => $domain,
+                        'subdomain' => ['www'],
+                        'ip' => [
+                            BlackwallConstants::GATEKEEPER_NODE_1_IPV4,
+                            BlackwallConstants::GATEKEEPER_NODE_2_IPV4
+                        ],
+                        'ipv6' => [
+                            BlackwallConstants::GATEKEEPER_NODE_1_IPV6,
+                            BlackwallConstants::GATEKEEPER_NODE_2_IPV6
+                        ],
+                        'user_id' => $user_id,
+                        'tag' => ['wisecp', 'debug'],
+                        'status' => BlackwallConstants::STATUS_ONLINE,
+                        'settings' => BlackwallConstants::getDefaultWebsiteSettings(),
+                        // Add upstream configuration
+                        'upstream' => [
+                            'ip' => $origin_ipv4,
+                            'ipv6' => $origin_ipv6
+                        ]
+                    ];
+                    
+                    $create_result = $this->helpers['api']->gatekeeperRequest('/website', 'POST', $gatekeeper_data);
+                    
+                    echo Utility::jencode([
+                        'status' => "successful",
+                        'message' => "GateKeeper create result: " . json_encode($create_result),
+                    ]);
+                } else {
+                    // Domain exists, show its details
+                    echo Utility::jencode([
+                        'status' => "successful",
+                        'message' => "Domain exists in GateKeeper: " . json_encode($result),
+                    ]);
+                }
+            } else {
+                echo Utility::jencode([
+                    'status' => "error",
+                    'message' => "API helper not initialized",
+                ]);
+            }
+            
+            return true;
+        } catch (Exception $e) {
+            echo Utility::jencode([
+                'status' => "error",
+                'message' => $e->getMessage(),
+            ]);
+            return false;
+        }
+    }
     /**
      * Get asset URL
      * 
@@ -580,6 +698,7 @@ class Blackwall extends ProductModule
         ];
     }
     /**
+/**
      * Detect origin server IPs before applying Blackwall protection
      * 
      * @param string $domain Domain to check
@@ -779,172 +898,104 @@ class Blackwall extends ProductModule
                     ]
                 );
             }
-            // Step 1: Create the user in Botguard
-            $user_data = [
-                'email' => $user_email,
-                'first_name' => $user_first_name,
-                'last_name' => $user_last_name
-            ];
-            
-            if(isset($this->helpers['log'])) {
-                $this->helpers['log']->info(
-                    'Creating user in Botguard',
-                    $user_data
-                );
-            }
-            
-            $user_result = $this->helpers['api']->request('/user', 'POST', $user_data);
-            
-            // Log execution time
-            $this->logExecutionTime('Creating user in Botguard');
-            
-            // Handle errors but continue with default values if needed
-            if(isset($user_result['status']) && $user_result['status'] === 'error') {
-                if(isset($this->helpers['log'])) {
-                    $this->helpers['log']->warning(
-                        'Error creating user in Botguard, using placeholder values',
-                        ['error' => $user_result['message'] ?? 'Unknown error']
-                    );
-                }
-                
-                // Use default user ID and API key
-                $user_id = 10000; // Placeholder ID
-                $user_api_key = 'placeholder_api_key'; // Placeholder API key
-            } else {
-                // Extract the user ID and API key from the response
-                $user_id = isset($user_result['id']) ? $user_result['id'] : 10000;
-                $user_api_key = isset($user_result['api_key']) ? $user_result['api_key'] : 'placeholder_api_key';
-            }
-            
-            if(isset($this->helpers['log'])) {
-                $this->helpers['log']->info(
-                    'User created in Botguard',
-                    ['user_id' => $user_id]
-                );
-            }
-            // Step 2: Create the website in Botguard
-            $website_data = [
-                'domain' => $user_domain,
-                'user_id' => $user_id,
-                'status' => 'setup'
-            ];
-            
-            if(isset($this->helpers['log'])) {
-                $this->helpers['log']->info(
-                    'Creating website in Botguard',
-                    $website_data
-                );
-            }
-            
-            $website_result = $this->helpers['api']->request('/website', 'POST', $website_data);
-            
-            // Log execution time
-            $this->logExecutionTime('Creating website in Botguard');
-            
-            if(isset($this->helpers['log'])) {
-                $this->helpers['log']->info(
-                    'Website created in Botguard',
-                    $website_result
-                );
-            }
-            
-            // Step 3: Create the user in GateKeeper - but don't wait for completion
-            try {
-                $gatekeeper_user_data = [
-                    'id' => $user_id,
-                    'email' => $user_email,
-                    'name' => $user_first_name . ' ' . $user_last_name,
-                    'tag' => ['wisecp'] // Add tag
-                ];
-                
-                if(isset($this->helpers['log'])) {
-                    $this->helpers['log']->info(
-                        'Creating user in GateKeeper',
-                        $gatekeeper_user_data
-                    );
-                }
-                
-                // Set shorter timeout for GateKeeper API
-                $gatekeeper_user_result = $this->helpers['api']->gatekeeperRequest('/user', 'POST', $gatekeeper_user_data);
-                
-                // Log execution time
-                $this->logExecutionTime('Creating user in GateKeeper');
-                
-                if(isset($this->helpers['log'])) {
-                    $this->helpers['log']->info(
-                        'User created in GateKeeper',
-                        $gatekeeper_user_result
-                    );
-                }
-            } catch (Exception $gk_user_e) {
-                // Log error but continue - the operation is non-critical
-                if(isset($this->helpers['log'])) {
-                    $this->helpers['log']->warning(
-                        'Error creating user in GateKeeper - continuing anyway',
-                        ['error' => $gk_user_e->getMessage()]
-                    );
-                }
-            }
-            // Step 4: Add the domain in GateKeeper with proper origin IPs - but don't wait for completion
-            try {
-                // IMPORTANT: Use detected origin IPs as upstream servers
-                $domain_ips = empty($origin_ips['ipv4']) 
-                    ? [BlackwallConstants::GATEKEEPER_NODE_1_IPV4, BlackwallConstants::GATEKEEPER_NODE_2_IPV4]
-                    : $origin_ips['ipv4'];
-                
-                $domain_ipv6s = empty($origin_ips['ipv6'])
-                    ? [BlackwallConstants::GATEKEEPER_NODE_1_IPV6, BlackwallConstants::GATEKEEPER_NODE_2_IPV6]
-                    : $origin_ips['ipv6'];
-                
-                // Prepare GateKeeper website data with origin IPs as upstream
-                $gatekeeper_website_data = [
-                    'domain' => $user_domain,
-                    'subdomain' => ['www'],
-                    'ip' => $domain_ips,
-                    'ipv6' => $domain_ipv6s,
-                    'user_id' => $user_id,
-                    'tag' => ['wisecp'],
-                    'status' => BlackwallConstants::STATUS_SETUP,
-                    'settings' => BlackwallConstants::getDefaultWebsiteSettings(),
-                    // Add upstream configuration
-                    'upstream' => [
-                        'ip' => $origin_ips['ipv4'],
-                        'ipv6' => $origin_ips['ipv6']
-                    ]
-                ];
-                
-                if(isset($this->helpers['log'])) {
-                    $this->helpers['log']->info(
-                        'Creating domain in GateKeeper with proper upstream configuration',
-                        [
-                            'domain' => $user_domain, 
-                            'upstream_ipv4' => $origin_ips['ipv4'],
-                            'upstream_ipv6' => $origin_ips['ipv6']
-                        ]
-                    );
-                }
-                
-                $gatekeeper_website_result = $this->helpers['api']->gatekeeperRequest('/website', 'POST', $gatekeeper_website_data);
-                
-                // Log execution time
-                $this->logExecutionTime('Creating domain in GateKeeper');
-                
-                if(isset($this->helpers['log'])) {
-                    $this->helpers['log']->info(
-                        'Domain created in GateKeeper',
-                        $gatekeeper_website_result
-                    );
-                }
-            } catch (Exception $gk_website_e) {
-                // Log error but continue - the domain might already exist in GateKeeper
-                if(isset($this->helpers['log'])) {
-                    $this->helpers['log']->warning(
-                        'Error creating domain in GateKeeper - continuing anyway',
-                        ['domain' => $user_domain, 'error' => $gk_website_e->getMessage()]
-                    );
-                }
-            }
-            // Step 5: Activate the domain by setting status to online in Botguard
+ // Step 1: Check if the domain already exists in BotGuard before creating
+try {
+    $domain_check = $this->helpers['api']->request('/website/' . $user_domain, 'GET');
+    
+    if(isset($domain_check['domain']) && $domain_check['domain'] == $user_domain) {
+        if(isset($this->helpers['log'])) {
+            $this->helpers['log']->info(
+                'Domain already exists in BotGuard',
+                ['domain' => $user_domain, 'status' => $domain_check['status']]
+            );
+        }
+        // Domain exists, skip creation
+        $domain_exists_in_botguard = true;
+    } else {
+        $domain_exists_in_botguard = false;
+    }
+} catch (Exception $e) {
+    // Error checking domain, assume it doesn't exist
+    $domain_exists_in_botguard = false;
+}
+
+// Only create the domain if it doesn't exist
+if(!$domain_exists_in_botguard) {
+    // [EXISTING BOTGUARD CREATION CODE HERE]
+}
+
+// Step 3: Check if the domain already exists in GateKeeper before creating
+try {
+    $gk_domain_check = $this->helpers['api']->gatekeeperRequest('/website/' . $user_domain, 'GET');
+    
+    if(isset($gk_domain_check['domain']) && $gk_domain_check['domain'] == $user_domain) {
+        if(isset($this->helpers['log'])) {
+            $this->helpers['log']->info(
+                'Domain already exists in GateKeeper',
+                ['domain' => $user_domain]
+            );
+        }
+        // Domain exists, skip creation
+        $domain_exists_in_gatekeeper = true;
+    } else {
+        $domain_exists_in_gatekeeper = false;
+    }
+} catch (Exception $e) {
+    // Error checking domain, assume it doesn't exist
+    $domain_exists_in_gatekeeper = false;
+}
+
+// Only create the domain if it doesn't exist
+if(!$domain_exists_in_gatekeeper) {
+    // Step 4: Add the domain in GateKeeper using EXACT API documentation format
+    try {
+        // Use ONLY the required fields from the API documentation
+        $gatekeeper_website_data = [
+            'domain' => $user_domain,
+            'ip' => $origin_ips['ipv4'],
+            'user_id' => $user_id,
+            'status' => 'online' // Set to online directly
+        ];
+        
+        // Add IPv6 only if we have them
+        if (!empty($origin_ips['ipv6'])) {
+            $gatekeeper_website_data['ipv6'] = $origin_ips['ipv6'];
+        }
+        
+        // Add subdomain if needed
+        $gatekeeper_website_data['subdomain'] = ['www'];
+        
+        if(isset($this->helpers['log'])) {
+            $this->helpers['log']->info(
+                'Creating domain in GateKeeper using minimal required fields',
+                [
+                    'domain' => $user_domain, 
+                    'ips' => $origin_ips['ipv4']
+                ]
+            );
+        }
+        
+        $gatekeeper_website_result = $this->helpers['api']->gatekeeperRequest('/website', 'POST', $gatekeeper_website_data);
+        
+        // Log execution time
+        $this->logExecutionTime('Creating domain in GateKeeper');
+        
+        if(isset($this->helpers['log'])) {
+            $this->helpers['log']->info(
+                'Domain created in GateKeeper',
+                $gatekeeper_website_result
+            );
+        }
+    } catch (Exception $gk_website_e) {
+        // Log error but continue
+        if(isset($this->helpers['log'])) {
+            $this->helpers['log']->warning(
+                'Error creating domain in GateKeeper - continuing anyway',
+                ['domain' => $user_domain, 'error' => $gk_website_e->getMessage()]
+            );
+        }
+    }
+}            // Step 5: Activate the domain by setting status to online in Botguard
             try {
                 $update_data = [
                     'status' => BlackwallConstants::STATUS_ONLINE
@@ -1311,8 +1362,7 @@ class Blackwall extends ProductModule
                     BlackwallConstants::GATEKEEPER_NODE_1_IPV4,
                     BlackwallConstants::GATEKEEPER_NODE_2_IPV4
                 ];
-                
-                $gatekeeper_ipv6 = [
+              $gatekeeper_ipv6 = [
                     BlackwallConstants::GATEKEEPER_NODE_1_IPV6,
                     BlackwallConstants::GATEKEEPER_NODE_2_IPV6
                 ];
