@@ -25,7 +25,7 @@ class BlackwallWelcomeHook
         error_log("Product ID: " . (isset($params['product_id']) ? $params['product_id'] : 'NOT SET'));
         
         // Check if this is Blackwall product (ID 105)
-        if (!isset($params['product_id']) || $params['product_id'] != 105) {
+        if (!isset($params['product_id']) || $params['product_id'] != 240) {
             error_log("Skipping - Not a Blackwall product");
             return;
         }
